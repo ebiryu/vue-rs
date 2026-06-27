@@ -1,0 +1,30 @@
+[package]
+name = "vue-rs-dom"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Fine-grained DOM rendering primitives for vue-rs."
+
+[dependencies]
+vue-rs-reactive = { path = "../vue-rs-reactive" }
+
+# Real browser backend. Optional so native `cargo test` resolves & builds with
+# no web-sys in the graph; enable with `--features web` (targets wasm32).
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    "Document",
+    "Window",
+    "Element",
+    "Node",
+    "Text",
+    "Event",
+    "EventTarget",
+] }
+
+[features]
+web = ["dep:wasm-bindgen", "dep:js-sys", "dep:web-sys"]
+
+[lints]
+workspace = true
