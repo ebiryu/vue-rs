@@ -1,0 +1,23 @@
+[package]
+name = "vue-rs-macro"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Procedural macros for vue-rs (view! template macro)."
+
+[lib]
+proc-macro = true
+
+[dependencies]
+vue-rs-compiler = { path = "../vue-rs-compiler" }
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+[dev-dependencies]
+vue-rs-dom = { path = "../vue-rs-dom" }
+vue-rs-reactive = { path = "../vue-rs-reactive" }
+
+[lints]
+workspace = true

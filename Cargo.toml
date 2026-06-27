@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/vue-rs-reactive", "crates/vue-rs-dom"]
+members = [
+    "crates/vue-rs-reactive",
+    "crates/vue-rs-dom",
+    "crates/vue-rs-compiler",
+    "crates/vue-rs-macro",
+]
 
 [workspace.package]
 edition = "2024"

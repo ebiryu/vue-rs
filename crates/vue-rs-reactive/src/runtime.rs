@@ -72,11 +72,10 @@ fn new_node(kind: Kind, value: Option<Box<dyn Any>>) -> NodeId {
                 kind,
             },
         );
-        if let Some(owner) = owner {
-            if let Some(node) = rt.nodes.get_mut(&owner) {
+        if let Some(owner) = owner
+            && let Some(node) = rt.nodes.get_mut(&owner) {
                 node.owned.push(id);
             }
-        }
         id
     })
 }
@@ -85,16 +84,14 @@ fn new_node(kind: Kind, value: Option<Box<dyn Any>>) -> NodeId {
 fn record_dependency(source: NodeId) {
     RT.with_borrow_mut(|rt| {
         if let Some(obs) = rt.observer {
-            if let Some(node) = rt.nodes.get_mut(&obs) {
-                if !node.sources.contains(&source) {
+            if let Some(node) = rt.nodes.get_mut(&obs)
+                && !node.sources.contains(&source) {
                     node.sources.push(source);
                 }
-            }
-            if let Some(node) = rt.nodes.get_mut(&source) {
-                if !node.subscribers.contains(&obs) {
+            if let Some(node) = rt.nodes.get_mut(&source)
+                && !node.subscribers.contains(&obs) {
                     node.subscribers.push(obs);
                 }
-            }
         }
     });
 }
@@ -159,11 +156,10 @@ fn dispose_node(id: NodeId) {
             }
         }
         // Detach from owner's owned list.
-        if let Some(owner) = rt.nodes.get(&id).and_then(|n| n.owner) {
-            if let Some(node) = rt.nodes.get_mut(&owner) {
+        if let Some(owner) = rt.nodes.get(&id).and_then(|n| n.owner)
+            && let Some(node) = rt.nodes.get_mut(&owner) {
                 node.owned.retain(|x| *x != id);
             }
-        }
         rt.nodes.remove(&id);
     });
 }
@@ -421,11 +417,10 @@ pub fn effect(f: impl FnMut() + 'static) {
 /// disposed. No-op outside a reactive scope.
 pub fn on_cleanup(f: impl FnOnce() + 'static) {
     RT.with_borrow_mut(|rt| {
-        if let Some(owner) = rt.owner {
-            if let Some(node) = rt.nodes.get_mut(&owner) {
+        if let Some(owner) = rt.owner
+            && let Some(node) = rt.nodes.get_mut(&owner) {
                 node.cleanups.push(Box::new(f));
             }
-        }
     });
 }
 
