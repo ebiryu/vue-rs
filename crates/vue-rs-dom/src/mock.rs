@@ -4,16 +4,23 @@ use std::rc::Rc;
 
 use crate::backend::Backend;
 
+/// An event handler receiving the event's value.
+type Handler = Rc<dyn Fn(&str)>;
+/// An event handler keyed by event name.
+type Listener = (String, Handler);
+
 enum NodeData {
     Element {
         tag: String,
         attrs: Vec<(String, String)>,
         children: Vec<usize>,
-        listeners: Vec<(String, Rc<dyn Fn()>)>,
+        listeners: Vec<Listener>,
     },
     Text {
         data: String,
     },
+    /// An invisible placeholder used to position dynamic content.
+    Anchor,
 }
 
 /// An in-memory DOM tree for testing. Nodes are addressed by `usize` handles.
@@ -34,9 +41,11 @@ impl MockDom {
     }
 
     /// Serialize the subtree rooted at `node` to an HTML-like string.
+    /// Anchors render as nothing, so dynamic positioning stays invisible.
     pub fn to_html(&self, node: usize) -> String {
         let nodes = self.nodes.borrow();
         match &nodes[node] {
+            NodeData::Anchor => String::new(),
             NodeData::Text { data } => data.clone(),
             NodeData::Element {
                 tag,
@@ -59,21 +68,27 @@ impl MockDom {
         }
     }
 
-    /// Invoke listeners registered for `event` on `node` (test-only dispatch).
+    /// Invoke listeners registered for `event` on `node` with no value.
     pub fn dispatch(&self, node: usize, event: &str) {
-        let handlers: Vec<Rc<dyn Fn()>> = {
+        self.dispatch_value(node, event, "");
+    }
+
+    /// Invoke listeners registered for `event` on `node`, passing `value`
+    /// (e.g. simulating typing into an input).
+    pub fn dispatch_value(&self, node: usize, event: &str, value: &str) {
+        let handlers: Vec<Handler> = {
             let nodes = self.nodes.borrow();
             match &nodes[node] {
                 NodeData::Element { listeners, .. } => listeners
                     .iter()
                     .filter(|(name, _)| name == event)
-                    .map(|(_, handler)| handler.clone())
+                    .map(|(_, handler)| Rc::clone(handler))
                     .collect(),
-                NodeData::Text { .. } => Vec::new(),
+                _ => Vec::new(),
             }
         };
         for handler in handlers {
-            handler();
+            handler(value);
         }
     }
 }
@@ -94,6 +109,10 @@ impl Backend for MockDom {
         self.push(NodeData::Text {
             data: data.to_string(),
         })
+    }
+
+    fn create_anchor(&self) -> usize {
+        self.push(NodeData::Anchor)
     }
 
     fn set_text(&self, node: &usize, data: &str) {
@@ -118,7 +137,22 @@ impl Backend for MockDom {
         }
     }
 
-    fn add_event_listener(&self, node: &usize, event: &str, handler: Rc<dyn Fn()>) {
+    fn insert_before(&self, parent: &usize, child: &usize, anchor: &usize) {
+        if let NodeData::Element { children, .. } = &mut self.nodes.borrow_mut()[*parent] {
+            // Mirror the DOM: inserting a node already in the tree moves it.
+            children.retain(|c| c != child);
+            let at = children.iter().position(|c| c == anchor).unwrap_or(children.len());
+            children.insert(at, *child);
+        }
+    }
+
+    fn remove_child(&self, parent: &usize, child: &usize) {
+        if let NodeData::Element { children, .. } = &mut self.nodes.borrow_mut()[*parent] {
+            children.retain(|c| c != child);
+        }
+    }
+
+    fn add_event_listener(&self, node: &usize, event: &str, handler: Rc<dyn Fn(&str)>) {
         if let NodeData::Element { listeners, .. } = &mut self.nodes.borrow_mut()[*node] {
             listeners.push((event.to_string(), handler));
         }

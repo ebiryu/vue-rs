@@ -1,4 +1,7 @@
 # Rust
 target/
 
+# Web
+examples/**/dist
+
 .claude/*

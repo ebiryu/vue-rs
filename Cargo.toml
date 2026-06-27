@@ -6,6 +6,9 @@ members = [
     "crates/vue-rs-compiler",
     "crates/vue-rs-macro",
 ]
+# Browser demo is wasm-only (uses the `web` feature); keep it out of native
+# workspace builds/tests. Build it with trunk or the wasm32 target directly.
+exclude = ["examples/counter-web"]
 
 [workspace.package]
 edition = "2024"

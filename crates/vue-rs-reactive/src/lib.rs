@@ -5,4 +5,7 @@
 
 mod runtime;
 
-pub use runtime::{computed, create_root, effect, on_cleanup, signal, Memo, Signal, RootDisposer};
+pub use runtime::{
+    computed, create_root, create_root_detached, effect, on_cleanup, signal, Memo, RootDisposer,
+    Signal,
+};

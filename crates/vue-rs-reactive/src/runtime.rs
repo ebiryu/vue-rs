@@ -438,8 +438,28 @@ impl RootDisposer {
 
 /// Run `f` inside a fresh ownership scope. Reactive nodes created within are
 /// owned by the root and torn down when the returned [`RootDisposer`] is disposed.
+/// The root is owned by the surrounding scope (disposed with it).
 pub fn create_root(f: impl FnOnce()) -> RootDisposer {
-    let id = new_node(Kind::Root, None);
+    run_in_new_root(false, f)
+}
+
+/// Like [`create_root`], but the root is not owned by the surrounding scope, so
+/// re-running an enclosing effect does not dispose it. The caller must dispose it
+/// explicitly. Used by control flow that manages branch lifetimes by hand.
+pub fn create_root_detached(f: impl FnOnce()) -> RootDisposer {
+    run_in_new_root(true, f)
+}
+
+fn run_in_new_root(detached: bool, f: impl FnOnce()) -> RootDisposer {
+    let id = if detached {
+        // Create the root with no owner so it survives enclosing effect re-runs.
+        let prev = RT.with_borrow_mut(|rt| rt.owner.take());
+        let id = new_node(Kind::Root, None);
+        RT.with_borrow_mut(|rt| rt.owner = prev);
+        id
+    } else {
+        new_node(Kind::Root, None)
+    };
     let (prev_obs, prev_owner) = RT.with_borrow_mut(|rt| {
         let p = (rt.observer, rt.owner);
         rt.observer = None; // root body itself is not reactive

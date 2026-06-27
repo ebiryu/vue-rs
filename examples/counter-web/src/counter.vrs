@@ -1,0 +1,18 @@
+<template>
+  <div>
+    <h1>vue-rs counter</h1>
+    <button @click="increment()">count is {{ count.get() }}</button>
+    <p v-if="count.get() > 4">that's a lot of clicks!</p>
+  </div>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::signal;
+
+let count = signal(0);
+let increment = move || count.set(count.get() + 1);
+</script>
+
+<style scoped>
+button { font-size: 1.2rem; padding: 0.5rem 1rem; }
+</style>
