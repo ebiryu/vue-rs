@@ -1,28 +1,28 @@
-# counter-web — vue-rs ブラウザデモ
+# counter-web browser demo
 
-`.vrs` SFC（[src/counter.vrs](src/counter.vrs)）を `WebDom` で実ブラウザの DOM にマウントするデモ。
+A demo that mounts a `.vrs` SFC ([src/counter.vrs](src/counter.vrs)) onto a real browser DOM using `WebDom`.
 
-## 実行
+## Running
 
-[trunk](https://trunk-rs.github.io/trunk/) を使う:
+Use [trunk](https://trunk-rs.github.io/trunk/):
 
 ```sh
-cargo install trunk          # 初回のみ
+cargo install trunk          # first time only
 cd examples/counter-web
-trunk serve --open           # http://localhost:8080 でホットリロード付き起動
+trunk serve --open           # serves at http://localhost:8080 with hot reload
 ```
 
-本番ビルドは `trunk build --release`（出力は `dist/`）。
+For a production build, run `trunk build --release` (output goes to `dist/`).
 
-## コンパイルだけ確認する
+## Checking compilation only
 
 ```sh
 cargo build --manifest-path examples/counter-web/Cargo.toml --target wasm32-unknown-unknown
 ```
 
-## 仕組み
+## How it works
 
-- `component!(counter, "src/counter.vrs")` が `<template>`/`<script lang="rust">`/`<style scoped>` を
-  単一の `fn counter<B: Backend>(__backend: B) -> B::Node` にコンパイルする。
-- `#[wasm_bindgen(start)]` の `start()` が `WebDom` を使ってコンポーネントを構築し、`<body>` にマウントする。
-- ボタンのクリックは Rust 側 `count` シグナルを更新し、`{{ count.get() }}` と `v-if` が細粒度に再描画される。
+- `component!(counter, "src/counter.vrs")` compiles the `<template>` / `<script lang="rust">` / `<style scoped>`
+  into a single `fn counter<B: Backend>(__backend: B) -> B::Node`.
+- The `start()` function marked with `#[wasm_bindgen(start)]` builds the component using `WebDom` and mounts it to `<body>`.
+- A button click updates the Rust-side `count` signal, and `{{ count.get() }}` together with `v-if` re-render in a fine-grained manner.

@@ -1,24 +1,24 @@
-# todo-web — vue-rs TodoMVC デモ
+# todo-web TodoMVC demo
 
-`.vrs` 単一コンポーネント（[src/todo_app.vrs](src/todo_app.vrs)）で、vue-rs の主要機能を総合的に使うデモ。
+A demo built from a single `.vrs` component ([src/todo_app.vrs](src/todo_app.vrs)) that exercises vue-rs's main features together.
 
-- **v-model**: 入力欄を `draft` シグナルに双方向バインド（追加後にクリア）
-- **v-for(keyed)**: `:key="todo.id"` で TODO 一覧を差分描画
-- **イベント**: 行内の「toggle / x」ボタンが Rust クロージャを呼ぶ
-- **computed**: 残数 `remaining` を派生
-- **v-if**: 空のときにメッセージ表示
+- **v-model**: two-way binds the input field to the `draft` signal (cleared after adding)
+- **v-for (keyed)**: renders the TODO list with diffing via `:key="todo.id"`
+- **events**: the per-row "toggle / x" buttons call Rust closures
+- **computed**: derives the remaining count `remaining`
+- **v-if**: shows a message when the list is empty
 - **scoped style**: `data-v-*` + `inject_style`
 
-## 実行
+## Running
 
 ```sh
 cd examples/todo-web
 trunk serve --open      # http://localhost:8080
 ```
 
-## 実装メモ
+## Implementation notes
 
-- 各 TODO は `Todo { id, text: Signal<String>, done: Signal<bool> }`（全フィールド `Copy`）。
-  `done` をシグナルにすることで、リストを作り直さずに行内だけ細粒度更新できる。
-- リアクティブな読み取り（`with`/`get`）のクロージャ内では reactive な書き込みを行わない。
-  必要な値（シグナル）を取り出してから外で `set` する（`toggle` 参照）。
+- Each TODO is `Todo { id, text: Signal<String>, done: Signal<bool> }` (all fields `Copy`).
+  Making `done` a signal lets each row update in a fine-grained way without rebuilding the list.
+- Do not perform reactive writes inside a reactive read (`with` / `get`) closure.
+  Extract the value (signal) you need first, then `set` it outside the closure (see `toggle`).
