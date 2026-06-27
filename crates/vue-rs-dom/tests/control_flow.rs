@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use vue_rs_dom::{El, MockDom};
-use vue_rs_reactive::signal;
+use vue_rs_reactive::{effect, signal};
 
 #[test]
 fn dyn_if_mounts_and_unmounts() {
@@ -54,6 +54,31 @@ fn on_value_receives_dispatched_value() {
 
     dom.dispatch_value(node, "input", "hello");
     assert_eq!(*captured.borrow(), "hello");
+}
+
+#[test]
+fn event_handler_batches_writes() {
+    let dom = MockDom::new();
+    let a = signal(0);
+    let b = signal(0);
+    let runs = Rc::new(RefCell::new(0));
+    let r = runs.clone();
+
+    let node = El::new(dom.clone(), "button")
+        .on("click", move || {
+            a.set(1);
+            b.set(2);
+        })
+        .finish();
+    effect(move || {
+        a.get();
+        b.get();
+        *r.borrow_mut() += 1;
+    });
+    assert_eq!(*runs.borrow(), 1);
+
+    dom.dispatch(node, "click"); // two writes, one batched effect run
+    assert_eq!(*runs.borrow(), 2);
 }
 
 #[test]

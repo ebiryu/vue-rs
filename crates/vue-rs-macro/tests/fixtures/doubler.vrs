@@ -1,0 +1,11 @@
+<template>
+  <button @click="inc()">{{ doubled.get().to_string() }}</button>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::{signal, computed};
+
+let n = signal(0);
+let doubled = computed(move || n.get() * 2);
+let inc = move || n.set(n.get() + 1);
+</script>

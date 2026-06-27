@@ -2,7 +2,7 @@
 //! `MockDom` backend so the reactive wiring is testable without a browser.
 
 use vue_rs_dom::{El, MockDom};
-use vue_rs_reactive::signal;
+use vue_rs_reactive::{create_root, signal};
 
 #[test]
 fn renders_static_element_with_text() {
@@ -68,4 +68,27 @@ fn event_handler_fires_and_drives_reactivity() {
     assert_eq!(dom.to_html(node), "<button>1</button>");
     dom.dispatch(node, "click");
     assert_eq!(dom.to_html(node), "<button>2</button>");
+}
+
+#[test]
+fn event_listener_is_removed_when_owning_scope_is_disposed() {
+    let dom = MockDom::new();
+    let count = signal(0);
+    let node = std::cell::Cell::new(0usize);
+    let disposer = create_root(|| {
+        let n = El::new(dom.clone(), "button")
+            .on("click", move || count.set(count.get() + 1))
+            .finish();
+        node.set(n);
+    });
+    let node = node.get();
+
+    dom.dispatch(node, "click");
+    assert_eq!(count.get(), 1);
+
+    disposer.dispose();
+    // The listener was registered inside the scope, so disposing the scope must
+    // detach it: further dispatches do nothing.
+    dom.dispatch(node, "click");
+    assert_eq!(count.get(), 1, "listener should be removed after dispose");
 }

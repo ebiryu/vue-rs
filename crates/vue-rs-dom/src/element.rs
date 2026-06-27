@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 
-use vue_rs_reactive::{create_root_detached, effect, RootDisposer};
+use vue_rs_reactive::{batch, create_root_detached, effect, on_cleanup, RootDisposer};
 
 use crate::backend::Backend;
 
@@ -63,18 +63,39 @@ impl<B: Backend> El<B> {
         self
     }
 
-    /// Attach an event listener that ignores the event value.
+    /// Attach an event listener that ignores the event value. Writes made by the
+    /// handler are batched, so dependent effects run at most once per event.
     pub fn on(self, event: &str, handler: impl Fn() + 'static) -> Self {
-        self.backend
-            .add_event_listener(&self.node, event, Rc::new(move |_value: &str| handler()));
+        let listener = self.backend.add_event_listener(
+            &self.node,
+            event,
+            // `handler` is captured by the listener (Fn), so it can't be moved
+            // into `batch`; wrap it in a closure.
+            #[allow(clippy::redundant_closure)]
+            Rc::new(move |_value: &str| batch(|| handler())),
+        );
+        self.cleanup_listener(listener);
         self
     }
 
     /// Attach an event listener that receives the event value (e.g. input text).
+    /// Writes made by the handler are batched.
     pub fn on_value(self, event: &str, handler: impl Fn(&str) + 'static) -> Self {
-        self.backend
-            .add_event_listener(&self.node, event, Rc::new(move |value: &str| handler(value)));
+        let listener = self.backend.add_event_listener(
+            &self.node,
+            event,
+            Rc::new(move |value: &str| batch(|| handler(value))),
+        );
+        self.cleanup_listener(listener);
         self
+    }
+
+    /// Detach `listener` when the enclosing reactive scope is disposed, so the
+    /// listener (and any closure it owns) is released with the node.
+    fn cleanup_listener(&self, listener: B::Listener) {
+        let backend = self.backend.clone();
+        let node = self.node.clone();
+        on_cleanup(move || backend.remove_event_listener(&node, listener));
     }
 
     /// Conditionally mount a child: build it when `cond` becomes true, remove it

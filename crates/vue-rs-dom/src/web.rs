@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
@@ -16,9 +17,35 @@ fn document() -> web_sys::Document {
         .expect("no document")
 }
 
+thread_local! {
+    /// Persistent closure that drains the reactive job queue, reused for every
+    /// scheduled microtask. Kept alive here so the JS callback stays valid.
+    static FLUSH_CLOSURE: RefCell<Option<Closure<dyn FnMut()>>> = const { RefCell::new(None) };
+}
+
+/// Route reactive flushes through the browser microtask queue (`queueMicrotask`).
+/// After this call, synchronous writes are coalesced and effects re-run once per
+/// microtask, matching Vue's asynchronous update scheduling.
+pub fn install_microtask_scheduler() {
+    FLUSH_CLOSURE.with_borrow_mut(|slot| {
+        if slot.is_none() {
+            *slot = Some(Closure::<dyn FnMut()>::new(vue_rs_reactive::flush_jobs));
+        }
+    });
+    vue_rs_reactive::set_scheduler(|| {
+        let window = web_sys::window().expect("no window");
+        FLUSH_CLOSURE.with_borrow(|slot| {
+            let closure = slot.as_ref().expect("flush closure installed");
+            window.queue_microtask(closure.as_ref().unchecked_ref());
+        });
+    });
+}
+
 impl WebDom {
-    /// Append `node` to the document body, then run `on_mounted` callbacks.
+    /// Append `node` to the document body, enable microtask-based scheduling, then
+    /// run `on_mounted` callbacks.
     pub fn mount(&self, node: &web_sys::Node) {
+        install_microtask_scheduler();
         let body = document().body().expect("document has no body");
         body.append_child(node).expect("mount append_child");
         vue_rs_reactive::flush_mounted();
@@ -36,6 +63,8 @@ impl WebDom {
 
 impl Backend for WebDom {
     type Node = web_sys::Node;
+    /// The event name plus the live JS closure; dropping it releases the closure.
+    type Listener = (String, Closure<dyn FnMut(web_sys::Event)>);
 
     fn create_element(&self, tag: &str) -> web_sys::Node {
         document()
@@ -83,7 +112,12 @@ impl Backend for WebDom {
         parent.remove_child(child).expect("remove_child");
     }
 
-    fn add_event_listener(&self, node: &web_sys::Node, event: &str, handler: Rc<dyn Fn(&str)>) {
+    fn add_event_listener(
+        &self,
+        node: &web_sys::Node,
+        event: &str,
+        handler: Rc<dyn Fn(&str)>,
+    ) -> Self::Listener {
         let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
             let value = event
                 .target()
@@ -96,7 +130,17 @@ impl Backend for WebDom {
         target
             .add_event_listener_with_callback(event, closure.as_ref().unchecked_ref())
             .expect("add_event_listener");
-        // Hand the closure to the JS GC roots so it stays alive with the listener.
-        closure.forget();
+        // Keep the closure alive by handing it back to the caller, which holds it
+        // until `remove_event_listener` drops it together with the listener.
+        (event.to_string(), closure)
+    }
+
+    fn remove_event_listener(&self, node: &web_sys::Node, listener: Self::Listener) {
+        let (event, closure) = listener;
+        let target: &web_sys::EventTarget = node.unchecked_ref();
+        target
+            .remove_event_listener_with_callback(&event, closure.as_ref().unchecked_ref())
+            .expect("remove_event_listener");
+        // `closure` is dropped here, freeing the boxed Rust handler.
     }
 }

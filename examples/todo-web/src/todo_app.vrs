@@ -20,7 +20,7 @@
 <script lang="rust">
 use vue_rs_reactive::{signal, computed, Signal};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct Todo {
     id: u32,
     text: Signal<String>,

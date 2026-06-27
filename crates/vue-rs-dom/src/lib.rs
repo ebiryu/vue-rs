@@ -18,4 +18,4 @@ pub use element::El;
 pub use mock::MockDom;
 pub use slots::Slots;
 #[cfg(feature = "web")]
-pub use web::WebDom;
+pub use web::{install_microtask_scheduler, WebDom};

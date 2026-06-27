@@ -6,6 +6,10 @@ use std::rc::Rc;
 /// Handles must be `Clone + 'static` so reactive effects can capture them.
 pub trait Backend: Clone + 'static {
     type Node: Clone + 'static;
+    /// Handle to an attached event listener, used to detach it later. Owns
+    /// whatever must be kept alive while the listener is registered (e.g. the
+    /// JS closure for the web backend).
+    type Listener: 'static;
 
     fn create_element(&self, tag: &str) -> Self::Node;
     fn create_text(&self, data: &str) -> Self::Node;
@@ -18,6 +22,15 @@ pub trait Backend: Clone + 'static {
     fn insert_before(&self, parent: &Self::Node, child: &Self::Node, anchor: &Self::Node);
     fn remove_child(&self, parent: &Self::Node, child: &Self::Node);
     /// Attach an event listener. The handler receives the event's value (e.g. an
-    /// input's text), or an empty string for events that carry no value.
-    fn add_event_listener(&self, node: &Self::Node, event: &str, handler: Rc<dyn Fn(&str)>);
+    /// input's text), or an empty string for events that carry no value. Returns
+    /// a handle that must be passed to [`Backend::remove_event_listener`] to
+    /// detach the listener and release its resources.
+    fn add_event_listener(
+        &self,
+        node: &Self::Node,
+        event: &str,
+        handler: Rc<dyn Fn(&str)>,
+    ) -> Self::Listener;
+    /// Detach a listener previously attached with [`Backend::add_event_listener`].
+    fn remove_event_listener(&self, node: &Self::Node, listener: Self::Listener);
 }

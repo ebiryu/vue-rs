@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt::Write as _;
 use std::rc::Rc;
 
@@ -6,8 +6,8 @@ use crate::backend::Backend;
 
 /// An event handler receiving the event's value.
 type Handler = Rc<dyn Fn(&str)>;
-/// An event handler keyed by event name.
-type Listener = (String, Handler);
+/// A registered listener: a unique id (for removal), its event name, and handler.
+type Listener = (usize, String, Handler);
 
 enum NodeData {
     Element {
@@ -27,6 +27,8 @@ enum NodeData {
 #[derive(Clone, Default)]
 pub struct MockDom {
     nodes: Rc<RefCell<Vec<NodeData>>>,
+    /// Source of unique ids handed to each registered listener.
+    next_listener_id: Rc<Cell<usize>>,
 }
 
 impl MockDom {
@@ -87,8 +89,8 @@ impl MockDom {
             match &nodes[node] {
                 NodeData::Element { listeners, .. } => listeners
                     .iter()
-                    .filter(|(name, _)| name == event)
-                    .map(|(_, handler)| Rc::clone(handler))
+                    .filter(|(_, name, _)| name == event)
+                    .map(|(_, _, handler)| Rc::clone(handler))
                     .collect(),
                 _ => Vec::new(),
             }
@@ -101,6 +103,7 @@ impl MockDom {
 
 impl Backend for MockDom {
     type Node = usize;
+    type Listener = usize;
 
     fn create_element(&self, tag: &str) -> usize {
         self.push(NodeData::Element {
@@ -158,9 +161,23 @@ impl Backend for MockDom {
         }
     }
 
-    fn add_event_listener(&self, node: &usize, event: &str, handler: Rc<dyn Fn(&str)>) {
+    fn add_event_listener(
+        &self,
+        node: &usize,
+        event: &str,
+        handler: Rc<dyn Fn(&str)>,
+    ) -> usize {
+        let id = self.next_listener_id.get();
+        self.next_listener_id.set(id + 1);
         if let NodeData::Element { listeners, .. } = &mut self.nodes.borrow_mut()[*node] {
-            listeners.push((event.to_string(), handler));
+            listeners.push((id, event.to_string(), handler));
+        }
+        id
+    }
+
+    fn remove_event_listener(&self, node: &usize, listener: usize) {
+        if let NodeData::Element { listeners, .. } = &mut self.nodes.borrow_mut()[*node] {
+            listeners.retain(|(id, _, _)| *id != listener);
         }
     }
 }
