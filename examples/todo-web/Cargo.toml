@@ -1,0 +1,14 @@
+[package]
+name = "todo-web"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+vue-rs-reactive = { path = "../../crates/vue-rs-reactive" }
+vue-rs-dom = { path = "../../crates/vue-rs-dom", features = ["web"] }
+vue-rs-macro = { path = "../../crates/vue-rs-macro" }
+wasm-bindgen = "0.2"

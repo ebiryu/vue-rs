@@ -9,7 +9,7 @@
 //!   re-runs or is disposed, its owned children are disposed and its registered
 //!   cleanups run.
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -36,6 +36,7 @@ struct Node {
     owner: Option<NodeId>,    // owner active when this node was created
     owned: Vec<NodeId>,       // nodes created while this node was the owner
     cleanups: Vec<Box<dyn FnOnce()>>,
+    contexts: HashMap<TypeId, Box<dyn Any>>, // values provided to descendants
     kind: Kind,
 }
 
@@ -44,6 +45,9 @@ struct Runtime {
     next_id: NodeId,
     observer: Option<NodeId>, // current dependency-tracking node
     owner: Option<NodeId>,    // current ownership node
+    batch_depth: usize,       // >0 while inside batch(): defer effect runs
+    pending: Vec<NodeId>,     // effects deferred by a batch, deduped, FIFO
+    flushing: bool,           // true while draining `pending`
 }
 
 thread_local! {
@@ -52,7 +56,13 @@ thread_local! {
         next_id: 0,
         observer: None,
         owner: None,
+        batch_depth: 0,
+        pending: Vec::new(),
+        flushing: false,
     });
+
+    /// Callbacks registered via [`on_mounted`], run by [`flush_mounted`].
+    static MOUNTED: RefCell<Vec<Box<dyn FnOnce()>>> = const { RefCell::new(Vec::new()) };
 }
 
 fn new_node(kind: Kind, value: Option<Box<dyn Any>>) -> NodeId {
@@ -69,6 +79,7 @@ fn new_node(kind: Kind, value: Option<Box<dyn Any>>) -> NodeId {
                 owner,
                 owned: Vec::new(),
                 cleanups: Vec::new(),
+                contexts: HashMap::new(),
                 kind,
             },
         );
@@ -271,9 +282,43 @@ fn propagate(start: NodeId) {
             Act::None => {}
         }
     }
-    for e in to_run {
-        run_effect(e);
+    schedule_effects(to_run);
+}
+
+/// Run the given effects now, or defer them to the pending queue while batching.
+fn schedule_effects(effects: Vec<NodeId>) {
+    let deferring = RT.with_borrow(|rt| rt.batch_depth > 0 || rt.flushing);
+    if deferring {
+        RT.with_borrow_mut(|rt| {
+            for e in effects {
+                if !rt.pending.contains(&e) {
+                    rt.pending.push(e);
+                }
+            }
+        });
+    } else {
+        for e in effects {
+            run_effect(e);
+        }
     }
+}
+
+fn flush_pending() {
+    RT.with_borrow_mut(|rt| rt.flushing = true);
+    loop {
+        let next = RT.with_borrow_mut(|rt| {
+            if rt.pending.is_empty() {
+                None
+            } else {
+                Some(rt.pending.remove(0))
+            }
+        });
+        match next {
+            Some(e) => run_effect(e),
+            None => break,
+        }
+    }
+    RT.with_borrow_mut(|rt| rt.flushing = false);
 }
 
 fn read_with<T: 'static, R>(id: NodeId, f: impl FnOnce(&T) -> R) -> R {
@@ -402,6 +447,21 @@ impl<T: 'static> Memo<T> {
     }
 }
 
+/// Run `f`, deferring all effect re-runs until it returns, so multiple writes
+/// trigger each affected effect at most once. Batches may nest.
+pub fn batch<T>(f: impl FnOnce() -> T) -> T {
+    RT.with_borrow_mut(|rt| rt.batch_depth += 1);
+    let result = f();
+    let depth = RT.with_borrow_mut(|rt| {
+        rt.batch_depth -= 1;
+        rt.batch_depth
+    });
+    if depth == 0 {
+        flush_pending();
+    }
+    result
+}
+
 /// Run `f` immediately and re-run it whenever any reactive value it read changes.
 pub fn effect(f: impl FnMut() + 'static) {
     let id = new_node(
@@ -448,6 +508,72 @@ pub fn create_root(f: impl FnOnce()) -> RootDisposer {
 /// explicitly. Used by control flow that manages branch lifetimes by hand.
 pub fn create_root_detached(f: impl FnOnce()) -> RootDisposer {
     run_in_new_root(true, f)
+}
+
+/// Run `f` inside a child ownership scope owned by the surrounding scope. Used by
+/// components so their effects and provided contexts are scoped to the subtree
+/// (disposed with the parent). Returns `f`'s result.
+pub fn run_in_child_scope<T>(f: impl FnOnce() -> T) -> T {
+    let id = new_node(Kind::Root, None); // owned by the current owner
+    let (prev_obs, prev_owner) = RT.with_borrow_mut(|rt| {
+        let p = (rt.observer, rt.owner);
+        rt.observer = None; // a scope body itself is not reactive
+        rt.owner = Some(id);
+        p
+    });
+    let result = f();
+    RT.with_borrow_mut(|rt| {
+        rt.observer = prev_obs;
+        rt.owner = prev_owner;
+    });
+    result
+}
+
+/// Register a callback to run when the current scope is disposed (unmounted).
+/// For a component scope this fires once, when the component is removed.
+pub fn on_unmounted(callback: impl FnOnce() + 'static) {
+    on_cleanup(callback);
+}
+
+/// Register a callback to run after the tree is mounted (see [`flush_mounted`]).
+pub fn on_mounted(callback: impl FnOnce() + 'static) {
+    MOUNTED.with_borrow_mut(|queue| queue.push(Box::new(callback)));
+}
+
+/// Run and clear all callbacks registered via [`on_mounted`]. Call this once the
+/// rendered tree has been inserted into the document.
+pub fn flush_mounted() {
+    let callbacks = MOUNTED.with_borrow_mut(std::mem::take);
+    for callback in callbacks {
+        callback();
+    }
+}
+
+/// Provide a value to descendant scopes, keyed by its type. Overrides any value
+/// of the same type provided by an ancestor. No-op outside a scope.
+pub fn provide_context<T: 'static>(value: T) {
+    RT.with_borrow_mut(|rt| {
+        if let Some(owner) = rt.owner
+            && let Some(node) = rt.nodes.get_mut(&owner)
+        {
+            node.contexts.insert(TypeId::of::<T>(), Box::new(value));
+        }
+    });
+}
+
+/// Look up the nearest value of type `T` provided by an ancestor scope.
+pub fn use_context<T: Clone + 'static>() -> Option<T> {
+    RT.with_borrow(|rt| {
+        let mut cur = rt.owner;
+        while let Some(id) = cur {
+            let node = rt.nodes.get(&id)?;
+            if let Some(value) = node.contexts.get(&TypeId::of::<T>()) {
+                return value.downcast_ref::<T>().cloned();
+            }
+            cur = node.owner;
+        }
+        None
+    })
 }
 
 fn run_in_new_root(detached: bool, f: impl FnOnce()) -> RootDisposer {

@@ -18,6 +18,7 @@ web-sys = { version = "0.3", optional = true, features = [
     "Window",
     "Element",
     "HtmlElement",
+    "HtmlHeadElement",
     "Node",
     "Text",
     "Comment",

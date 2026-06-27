@@ -1,0 +1,10 @@
+<template>
+  <p>{{ status.get() }}</p>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::{signal, on_mounted};
+
+let status = signal(String::from("pending"));
+on_mounted(move || status.set(String::from("mounted")));
+</script>

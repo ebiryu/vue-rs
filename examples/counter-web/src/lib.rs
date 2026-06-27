@@ -9,6 +9,7 @@ component!(counter, "src/counter.vrs");
 #[wasm_bindgen(start)]
 pub fn start() {
     let dom = WebDom;
+    dom.inject_style(COUNTER_STYLE);
     let node = counter(dom.clone());
     dom.mount(&node);
 }

@@ -1,0 +1,9 @@
+<template>
+  <span>{{ value.to_string() }}</span>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::use_context;
+
+let value = use_context::<i32>().unwrap_or(0);
+</script>

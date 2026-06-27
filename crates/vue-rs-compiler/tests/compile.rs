@@ -114,6 +114,36 @@ fn whitespace_between_elements_is_dropped() {
 }
 
 #[test]
+fn component_without_props() {
+    compiles_to("<Child />", quote! { Child(__backend.clone()) });
+}
+
+#[test]
+fn component_with_props_and_event() {
+    compiles_to(
+        r#"<Child :value="count" @change="handler" />"#,
+        quote! {
+            Child(__backend.clone(), ChildProps {
+                value: count,
+                on_change: ::vue_rs_dom::Callback::new(handler)
+            })
+        },
+    );
+}
+
+#[test]
+fn component_nested_in_element() {
+    compiles_to(
+        r#"<div><Child :x="y" /></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .child(Child(__backend.clone(), ChildProps { x: y }))
+                .finish()
+        },
+    );
+}
+
+#[test]
 fn error_on_multiple_root_elements() {
     assert!(compile_template("<p>a</p><p>b</p>").is_err());
 }

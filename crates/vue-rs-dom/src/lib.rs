@@ -5,13 +5,17 @@
 //! builder wires reactive text/attributes to the reactive core via effects.
 
 mod backend;
+mod callback;
 mod element;
 mod mock;
+mod slots;
 #[cfg(feature = "web")]
 mod web;
 
 pub use backend::Backend;
+pub use callback::Callback;
 pub use element::El;
 pub use mock::MockDom;
+pub use slots::Slots;
 #[cfg(feature = "web")]
 pub use web::WebDom;

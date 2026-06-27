@@ -26,9 +26,13 @@ pub fn view(input: TokenStream) -> TokenStream {
     }
 }
 
-/// `component!(name, "path/to/file.vrs")` reads a single-file component, splices
-/// its `<script lang="rust">` and the code compiled from its `<template>` into a
-/// single generic render function `fn name<B: Backend>(__backend: B) -> B::Node`.
+/// `component!(name, "path/to/file.vrs")` reads a single-file component and
+/// produces a render function `fn name<B: Backend>(__backend: B[, props: NameProps]) -> B::Node`,
+/// splicing the `<script lang="rust">` body and the code compiled from `<template>`.
+///
+/// If the `<script>` declares a `struct NameProps { .. }`, the function gains a
+/// `props: NameProps` parameter (props/emits flow in through it). `use` items and
+/// that struct are lifted to module level so the signature can name the type.
 ///
 /// If a `<style>` block is present, its CSS is exposed as `pub const NAME_STYLE`.
 #[proc_macro]
@@ -49,30 +53,78 @@ pub fn component(input: TokenStream) -> TokenStream {
         Err(err) => return compile_error(&err.to_string()),
     };
 
-    let script: proc_macro2::TokenStream = match sfc.script.as_deref().unwrap_or("").parse() {
-        Ok(tokens) => tokens,
-        Err(err) => return compile_error(&format!("invalid <script>: {err}")),
-    };
+    // Partition the script: lift `use` items and the `NameProps` struct to module
+    // level; keep the rest as the function body.
+    let props_name = format!("{name}Props");
+    let mut uses: Vec<syn::ItemUse> = Vec::new();
+    let mut props_struct: Option<syn::ItemStruct> = None;
+    let mut body: Vec<syn::Stmt> = Vec::new();
+    if let Some(src) = sfc.script.as_deref().filter(|s| !s.is_empty()) {
+        let block: syn::Block = match syn::parse_str(&format!("{{ {src} }}")) {
+            Ok(block) => block,
+            Err(err) => return compile_error(&format!("invalid <script>: {err}")),
+        };
+        for stmt in block.stmts {
+            match stmt {
+                syn::Stmt::Item(syn::Item::Use(item)) => uses.push(item),
+                syn::Stmt::Item(syn::Item::Struct(item)) if item.ident == props_name => {
+                    props_struct = Some(item);
+                }
+                other => body.push(other),
+            }
+        }
+    }
 
-    let template = match vue_rs_compiler::compile_template(&sfc.template) {
+    // A `<style>` block enables scoping: elements get a `data-v-<scope>` marker
+    // and the CSS is rewritten to target it.
+    let scope = sfc
+        .style
+        .as_ref()
+        .map(|_| vue_rs_compiler::scope_id(&full_path_str));
+
+    let compiled = match &scope {
+        Some(scope) => vue_rs_compiler::compile_template_scoped(&sfc.template, scope),
+        None => vue_rs_compiler::compile_template(&sfc.template),
+    };
+    let template = match compiled {
         Ok(tokens) => tokens,
         Err(err) => return compile_error(&err.to_string()),
     };
 
-    let style_const = sfc.style.map(|css| {
+    let props_param = props_struct.as_ref().map(|item| {
+        let ty = &item.ident;
+        quote! { , props: #ty }
+    });
+
+    // A `<slot>` in the template means the component accepts parent-provided
+    // slot content, passed as a `Slots` map.
+    let slots_param = sfc
+        .template
+        .contains("<slot")
+        .then(|| quote! { , __slots: ::vue_rs_dom::Slots<B> });
+
+    let style_const = sfc.style.as_ref().map(|css| {
+        let scoped = vue_rs_compiler::scope_css(css, scope.as_deref().unwrap_or_default());
         let const_name = Ident::new(&format!("{}_STYLE", name).to_uppercase(), name.span());
-        quote! { pub const #const_name: &str = #css; }
+        quote! { pub const #const_name: &str = #scoped; }
     });
 
     quote! {
+        #(#uses)*
+        #props_struct
         #style_const
 
-        pub fn #name<B: ::vue_rs_dom::Backend>(__backend: B) -> B::Node {
+        #[allow(non_snake_case)]
+        pub fn #name<B: ::vue_rs_dom::Backend>(__backend: B #props_param #slots_param) -> B::Node {
             // Re-run this macro when the source file changes.
             const _: &[u8] = include_bytes!(#full_path_str);
             use ::vue_rs_dom::El;
-            #script
-            #template
+            // Each component owns a scope: its effects and provided contexts are
+            // scoped to this subtree.
+            ::vue_rs_reactive::run_in_child_scope(move || {
+                #(#body)*
+                #template
+            })
         }
     }
     .into()

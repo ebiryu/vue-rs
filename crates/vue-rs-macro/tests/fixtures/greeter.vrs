@@ -1,0 +1,21 @@
+<template>
+  <button @click="bump()">{{ label.get() }}: {{ count.get() }}</button>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::Signal;
+use vue_rs_dom::Callback;
+
+pub struct GreeterProps {
+    pub label: Signal<String>,
+    pub on_total: Callback<i32>,
+}
+
+let label = props.label;
+let on_total = props.on_total.clone();
+let count = vue_rs_reactive::signal(0);
+let bump = move || {
+    count.set(count.get() + 1);
+    on_total.call(count.get());
+};
+</script>

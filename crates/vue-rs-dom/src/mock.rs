@@ -68,6 +68,12 @@ impl MockDom {
         }
     }
 
+    /// Find the first element node (in creation order) with the given tag.
+    pub fn find(&self, tag: &str) -> Option<usize> {
+        let nodes = self.nodes.borrow();
+        nodes.iter().position(|n| matches!(n, NodeData::Element { tag: t, .. } if t == tag))
+    }
+
     /// Invoke listeners registered for `event` on `node` with no value.
     pub fn dispatch(&self, node: usize, event: &str) {
         self.dispatch_value(node, event, "");

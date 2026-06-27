@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use vue_rs_reactive::{computed, effect, signal};
+use vue_rs_reactive::{batch, computed, effect, signal};
 
 #[test]
 fn signal_get_returns_initial_value() {
@@ -145,6 +145,38 @@ fn dynamic_dependencies_are_cleaned_up() {
 
     b.set(200); // b is tracked -> rerun
     assert_eq!(*runs.borrow(), 3);
+}
+
+#[test]
+fn batch_coalesces_writes_into_one_effect_run() {
+    let a = signal(0);
+    let b = signal(0);
+    let runs = Rc::new(RefCell::new(0));
+    let sum = Rc::new(RefCell::new(0));
+    let (r, s) = (runs.clone(), sum.clone());
+    effect(move || {
+        *s.borrow_mut() = a.get() + b.get();
+        *r.borrow_mut() += 1;
+    });
+    assert_eq!(*runs.borrow(), 1);
+
+    batch(|| {
+        a.set(10);
+        b.set(20);
+    });
+    assert_eq!(*runs.borrow(), 2); // one rerun for two writes
+    assert_eq!(*sum.borrow(), 30);
+
+    // Without a batch, each write reruns the effect.
+    a.set(1);
+    b.set(2);
+    assert_eq!(*runs.borrow(), 4);
+}
+
+#[test]
+fn batch_returns_inner_value() {
+    let value = batch(|| 7);
+    assert_eq!(value, 7);
 }
 
 #[test]

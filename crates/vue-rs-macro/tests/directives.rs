@@ -54,6 +54,20 @@ fn v_for_keyed_list() {
 }
 
 #[test]
+fn v_for_row_click_fires_handler() {
+    let dom = MockDom::new();
+    let items = signal(vec![10, 20]);
+    let clicked = signal(0);
+    let _node = view!(
+        dom.clone(),
+        r#"<ul><li v-for="n in items.get()" :key="n"><button @click="clicked.set(n)">{{ n.to_string() }}</button></li></ul>"#
+    );
+    let button = dom.find("button").expect("a row button");
+    dom.dispatch(button, "click");
+    assert_eq!(clicked.get(), 10);
+}
+
+#[test]
 fn v_model_two_way_binding() {
     let dom = MockDom::new();
     let text = signal(String::from("hi"));

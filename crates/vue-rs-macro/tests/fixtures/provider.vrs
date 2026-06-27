@@ -1,0 +1,9 @@
+<template>
+  <div><Themed /></div>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::provide_context;
+
+provide_context(42i32);
+</script>

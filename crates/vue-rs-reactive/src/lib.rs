@@ -6,6 +6,7 @@
 mod runtime;
 
 pub use runtime::{
-    computed, create_root, create_root_detached, effect, on_cleanup, signal, Memo, RootDisposer,
-    Signal,
+    batch, computed, create_root, create_root_detached, effect, flush_mounted, on_cleanup,
+    on_mounted, on_unmounted, provide_context, run_in_child_scope, signal, use_context, Memo,
+    RootDisposer, Signal,
 };

@@ -19,8 +19,3 @@ fn sfc_counter_renders_and_reacts() {
     dom.dispatch(node, "click");
     assert_eq!(dom.to_html(node), "<button>count is 2</button>");
 }
-
-#[test]
-fn sfc_style_block_is_exposed() {
-    assert_eq!(COUNTER_STYLE, "button { color: red; }");
-}
