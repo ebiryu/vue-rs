@@ -10,7 +10,7 @@ component!(Themed, "tests/fixtures/themed.vrs");
 #[test]
 fn provided_value_reaches_descendant() {
     let dom = MockDom::new();
-    let node = Provider(dom.clone());
+    let node = Provider(dom.clone(), Default::default());
     assert_eq!(dom.to_html(node), "<div><span>42</span></div>");
 }
 
@@ -18,6 +18,6 @@ fn provided_value_reaches_descendant() {
 fn missing_context_falls_back_to_default() {
     let dom = MockDom::new();
     // Rendered without a Provider ancestor: use_context returns None -> default 0.
-    let node = Themed(dom.clone());
+    let node = Themed(dom.clone(), Default::default());
     assert_eq!(dom.to_html(node), "<span>0</span>");
 }

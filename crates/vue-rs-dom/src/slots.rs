@@ -1,43 +1,37 @@
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::backend::Backend;
 
-type SlotFn<B> = Rc<dyn Fn(B) -> <B as Backend>::Node>;
-
-/// The slot content a parent passes to a component, keyed by slot name. The
-/// unnamed (default) slot uses the name `"default"`.
-pub struct Slots<B: Backend> {
-    slots: HashMap<&'static str, SlotFn<B>>,
+/// A typed, cloneable slot builder. Each component gets a generated
+/// `NameSlots<B>` struct with one `Option<SlotFn<B, T>>` field per slot the
+/// parent may fill; scoped slots use their declared payload type `T`, plain
+/// slots use `T = ()`. The parent supplies a plain `impl Fn(B, T) -> B::Node`
+/// closure to the struct's `with_<name>` builder (whose signature names `T`, so
+/// the closure needs no annotation); that builder wraps it in a `SlotFn`, so the
+/// slot can be rendered — and reused across dynamic regions — by cloning. The
+/// payload type is checked at compile time, and any subset of slots may be
+/// provided (the rest stay `None`, rendering the slot's fallback).
+pub struct SlotFn<B: Backend, T> {
+    builder: Rc<dyn Fn(B, T) -> B::Node>,
 }
 
-impl<B: Backend> Default for Slots<B> {
-    fn default() -> Self {
+impl<B: Backend, T> Clone for SlotFn<B, T> {
+    fn clone(&self) -> Self {
         Self {
-            slots: HashMap::new(),
+            builder: Rc::clone(&self.builder),
         }
     }
 }
 
-impl<B: Backend> Slots<B> {
-    pub fn new() -> Self {
-        Self::default()
+impl<B: Backend, T> SlotFn<B, T> {
+    pub fn new(builder: impl Fn(B, T) -> B::Node + 'static) -> Self {
+        Self {
+            builder: Rc::new(builder),
+        }
     }
 
-    /// Like [`new`](Self::new), but pins the backend type from a value so slot
-    /// builder closures can infer their parameter type.
-    pub fn for_backend(_backend: &B) -> Self {
-        Self::new()
-    }
-
-    /// Register the builder for a named slot.
-    pub fn with(mut self, name: &'static str, builder: impl Fn(B) -> B::Node + 'static) -> Self {
-        self.slots.insert(name, Rc::new(builder));
-        self
-    }
-
-    /// Build the content for `name`, or `None` if the parent did not provide it.
-    pub fn render(&self, name: &str, backend: B) -> Option<B::Node> {
-        self.slots.get(name).map(|builder| builder(backend))
+    /// Build the slot's content with `data`.
+    pub fn render(&self, backend: B, data: T) -> B::Node {
+        (self.builder)(backend, data)
     }
 }

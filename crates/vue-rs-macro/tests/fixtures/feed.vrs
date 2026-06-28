@@ -1,0 +1,13 @@
+<template>
+  <ul><slot name="row" :index="3" /></ul>
+</template>
+
+<script lang="rust">
+pub struct RowData {
+    pub index: i32,
+}
+
+pub struct FeedSlots {
+    pub row: RowData,
+}
+</script>

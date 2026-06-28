@@ -9,7 +9,7 @@ component!(Boxed, "tests/fixtures/boxed.vrs");
 #[test]
 fn scoped_style_marks_elements_and_rewrites_css() {
     let dom = MockDom::new();
-    let html = dom.to_html(Boxed(dom.clone()));
+    let html = dom.to_html(Boxed(dom.clone(), Default::default()));
 
     // Both elements carry the same data-v marker.
     let id: String = html

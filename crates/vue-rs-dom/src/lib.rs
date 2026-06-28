@@ -16,6 +16,6 @@ pub use backend::Backend;
 pub use callback::Callback;
 pub use element::El;
 pub use mock::MockDom;
-pub use slots::Slots;
+pub use slots::SlotFn;
 #[cfg(feature = "web")]
 pub use web::{install_microtask_scheduler, WebDom};

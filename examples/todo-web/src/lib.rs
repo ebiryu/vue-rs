@@ -10,6 +10,6 @@ component!(TodoApp, "src/todo_app.vrs");
 pub fn start() {
     let dom = WebDom;
     dom.inject_style(TODOAPP_STYLE);
-    let node = TodoApp(dom.clone());
+    let node = TodoApp(dom.clone(), Default::default());
     dom.mount(&node);
 }

@@ -1,0 +1,15 @@
+<template>
+  <div class="badge"><slot :label="text" /></div>
+</template>
+
+<script lang="rust">
+pub struct BadgeData {
+    pub label: String,
+}
+
+pub struct BadgeSlots {
+    pub default: BadgeData,
+}
+
+let text = String::from("new");
+</script>

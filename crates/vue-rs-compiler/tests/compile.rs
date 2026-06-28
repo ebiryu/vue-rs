@@ -115,7 +115,12 @@ fn whitespace_between_elements_is_dropped() {
 
 #[test]
 fn component_without_props() {
-    compiles_to("<Child />", quote! { Child(__backend.clone()) });
+    // Every component call passes its slots struct, so a slot-bearing component
+    // works even when the parent provides nothing.
+    compiles_to(
+        "<Child />",
+        quote! { Child(__backend.clone(), ChildSlots::for_backend(&__backend)) },
+    );
 }
 
 #[test]
@@ -123,10 +128,14 @@ fn component_with_props_and_event() {
     compiles_to(
         r#"<Child :value="count" @change="handler" />"#,
         quote! {
-            Child(__backend.clone(), ChildProps {
-                value: count,
-                on_change: ::vue_rs_dom::Callback::new(handler)
-            })
+            Child(
+                __backend.clone(),
+                ChildProps {
+                    value: count,
+                    on_change: ::vue_rs_dom::Callback::new(handler)
+                },
+                ChildSlots::for_backend(&__backend)
+            )
         },
     );
 }
@@ -137,7 +146,11 @@ fn component_nested_in_element() {
         r#"<div><Child :x="y" /></div>"#,
         quote! {
             El::new(__backend.clone(), "div")
-                .child(Child(__backend.clone(), ChildProps { x: y }))
+                .child(Child(
+                    __backend.clone(),
+                    ChildProps { x: y },
+                    ChildSlots::for_backend(&__backend)
+                ))
                 .finish()
         },
     );

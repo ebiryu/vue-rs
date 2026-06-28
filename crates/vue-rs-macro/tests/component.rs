@@ -9,7 +9,7 @@ component!(counter, "tests/fixtures/counter.vrs");
 #[test]
 fn sfc_counter_renders_and_reacts() {
     let dom = MockDom::new();
-    let node = counter(dom.clone());
+    let node = counter(dom.clone(), Default::default());
 
     assert_eq!(dom.to_html(node), "<button>count is 0</button>");
 

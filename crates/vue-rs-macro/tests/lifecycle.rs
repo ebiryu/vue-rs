@@ -10,7 +10,7 @@ component!(Widget, "tests/fixtures/widget.vrs");
 #[test]
 fn on_mounted_runs_after_flush() {
     let dom = MockDom::new();
-    let node = Widget(dom.clone());
+    let node = Widget(dom.clone(), Default::default());
 
     // Before mount flush, the on_mounted callback has not run.
     assert_eq!(dom.to_html(node), "<p>pending</p>");

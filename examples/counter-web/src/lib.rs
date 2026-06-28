@@ -10,6 +10,6 @@ component!(counter, "src/counter.vrs");
 pub fn start() {
     let dom = WebDom;
     dom.inject_style(COUNTER_STYLE);
-    let node = counter(dom.clone());
+    let node = counter(dom.clone(), Default::default());
     dom.mount(&node);
 }

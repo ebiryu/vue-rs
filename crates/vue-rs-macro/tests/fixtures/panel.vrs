@@ -1,0 +1,19 @@
+<template>
+  <div class="panel"><slot name="head" :title="title"><span>?</span></slot><slot name="foot" :year="year"><em>none</em></slot></div>
+</template>
+
+<script lang="rust">
+pub struct HeadData {
+    pub title: String,
+}
+pub struct FootData {
+    pub year: i32,
+}
+pub struct PanelSlots {
+    pub head: HeadData,
+    pub foot: FootData,
+}
+
+let title = String::from("Hi");
+let year = 2026;
+</script>

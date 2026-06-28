@@ -44,3 +44,34 @@ pub fn compile_template_scoped(
         .root(&nodes)
         .map_err(CompileError)
 }
+
+/// The result of compiling a component's `<template>`.
+pub struct CompiledComponent {
+    /// The `El`-builder code for the template.
+    pub tokens: proc_macro2::TokenStream,
+    /// Every `<slot>` the template uses, as `(name, scoped)` pairs. The caller
+    /// generates the component's `NameSlots` struct from this: one
+    /// `Option<SlotFn<B, _>>` field per slot (scoped slots use their declared
+    /// payload type, plain slots use `()`).
+    pub slots: Vec<(String, bool)>,
+}
+
+/// Compile a component's `<template>`, given the payload type of each scoped
+/// slot (keyed by slot name, taken from the component's declared `NameSlots`
+/// fields) and an optional scoped-CSS marker id. A `<slot :field="x">` builds
+/// the named payload struct; the parent supplies it through the `NameSlots`
+/// struct's `with_<name>` builder.
+pub fn compile_component_template(
+    template: &str,
+    scope_id: Option<&str>,
+    slot_payloads: Vec<(String, proc_macro2::TokenStream)>,
+) -> Result<CompiledComponent, CompileError> {
+    let nodes = parser::parse(template).map_err(CompileError)?;
+    let codegen =
+        codegen::Codegen::with_slot_payloads(scope_id.map(str::to_string), slot_payloads.into_iter().collect());
+    let tokens = codegen.root(&nodes).map_err(CompileError)?;
+    Ok(CompiledComponent {
+        tokens,
+        slots: codegen.slots(),
+    })
+}

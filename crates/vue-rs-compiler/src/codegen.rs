@@ -1,5 +1,8 @@
 //! Lowers the template AST into `El`-builder Rust code.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::Ident;
@@ -8,13 +11,48 @@ use crate::parser::{Attr, Element, Node};
 
 /// Code generator. When `scope` is set (a `<style scoped>` is present), every
 /// element gets a `data-v-<scope>` marker attribute so scoped CSS can target it.
+///
+/// `slot_payloads` maps each scoped slot's name to its payload type (read from
+/// the component's declared `NameSlots` fields), so a `<slot :field="x">` can
+/// build the named payload struct it hands to the matching `__slots.<name>`
+/// slot builder. `slots` records every `<slot>` the template emits (name and
+/// whether it is scoped), so the caller can generate the component's `NameSlots`
+/// struct.
 pub(crate) struct Codegen {
     scope: Option<String>,
+    slot_payloads: HashMap<String, TokenStream>,
+    slots: RefCell<Vec<(String, bool)>>,
 }
 
 impl Codegen {
     pub(crate) fn new(scope: Option<String>) -> Self {
-        Self { scope }
+        Self::with_slot_payloads(scope, HashMap::new())
+    }
+
+    pub(crate) fn with_slot_payloads(
+        scope: Option<String>,
+        slot_payloads: HashMap<String, TokenStream>,
+    ) -> Self {
+        Self {
+            scope,
+            slot_payloads,
+            slots: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Every `<slot>` the template emitted, as `(name, scoped)` pairs (deduped by
+    /// name, in first-seen order). Meaningful after [`root`](Self::root) has run;
+    /// the caller uses it to generate the component's `NameSlots` struct.
+    pub(crate) fn slots(&self) -> Vec<(String, bool)> {
+        self.slots.borrow().clone()
+    }
+
+    /// Record a `<slot>` usage, ignoring a repeat of a name already seen.
+    fn record_slot(&self, name: &str, scoped: bool) {
+        let mut slots = self.slots.borrow_mut();
+        if !slots.iter().any(|(n, _)| n == name) {
+            slots.push((name.to_string(), scoped));
+        }
     }
 
     /// Generate the builder expression for a template's single root element.
@@ -34,12 +72,46 @@ impl Codegen {
 
     fn element(&self, el: &Element) -> Result<TokenStream, String> {
         if el.tag == "slot" {
-            // Render the named slot's content, or an empty anchor if absent.
             let name = find_static(el, "name").unwrap_or("default");
+            let dyn_attrs: Vec<(&str, &str)> = el
+                .attrs
+                .iter()
+                .filter_map(|attr| match attr {
+                    Attr::Dyn { name, expr } => Some((name.as_str(), expr.as_str())),
+                    _ => None,
+                })
+                .collect();
+            let fallback = self.slot_fallback(el)?;
+            let field = Ident::new(name, Span::call_site());
+            // Every slot is held as an `Option<SlotFn<_, _>>` field on the
+            // component's `__slots` struct. A plain slot carries a `()` payload; a
+            // scoped slot builds its declared payload struct from the `:field="x"`
+            // attributes. Either way, an unprovided slot renders the fallback.
+            let payload = if dyn_attrs.is_empty() {
+                self.record_slot(name, false);
+                quote! { () }
+            } else {
+                self.record_slot(name, true);
+                let payload_ty = self.slot_payloads.get(name).ok_or_else(|| {
+                    format!(
+                        "scoped slot `{name}` needs a `{name}: _` field in the component's Slots struct"
+                    )
+                })?;
+                let mut payload_fields = Vec::new();
+                for (attr, expr) in dyn_attrs {
+                    let attr = Ident::new(attr, Span::call_site());
+                    let expr = parse_expr(expr)?;
+                    payload_fields.push(quote! { #attr: #expr });
+                }
+                quote! { #payload_ty { #(#payload_fields),* } }
+            };
             return Ok(quote! {
-                __slots
-                    .render(#name, __backend.clone())
-                    .unwrap_or_else(|| ::vue_rs_dom::Backend::create_anchor(&__backend))
+                match &__slots.#field {
+                    ::core::option::Option::Some(__slot) => {
+                        __slot.render(__backend.clone(), #payload)
+                    }
+                    ::core::option::Option::None => #fallback,
+                }
             });
         }
         if is_component(&el.tag) {
@@ -90,51 +162,71 @@ impl Codegen {
                 }
             }
         }
-        let mut args = vec![quote! { __backend.clone() }];
-        if !fields.is_empty() {
-            let props = Ident::new(&format!("{}Props", el.tag), Span::call_site());
-            args.push(quote! { #props { #(#fields),* } });
-        }
-        if let Some(slots) = self.slots(&el.children)? {
-            args.push(slots);
-        }
-        Ok(quote! { #component(#(#args),*) })
-    }
-
-    /// Build the `Slots` a parent passes to a component: `<template v-slot:name>`
-    /// children become named slots; the remaining single element is the default.
-    fn slots(&self, children: &[Node]) -> Result<Option<TokenStream>, String> {
-        let elements: Vec<&Element> = children
-            .iter()
-            .filter_map(|n| match n {
-                Node::Element(e) => Some(e),
-                _ => None,
-            })
-            .collect();
-        if elements.is_empty() {
-            return Ok(None);
-        }
-        let mut builder = quote! { ::vue_rs_dom::Slots::for_backend(&__backend) };
+        // Every child this parent provides is funnelled into the component's
+        // generated `NameSlots` struct, built up from `for_backend` (which pins
+        // the backend type) via per-slot `with_<name>` builders. Each builder
+        // names its slot's payload type, so a scoped binding `pat` needs no
+        // annotation. Unprovided slots keep their `None` default, so the parent
+        // may provide any subset — including nothing at all. The struct is always
+        // passed, so a slot-bearing component works even with no slots provided.
+        let mut setters: Vec<TokenStream> = Vec::new();
         let mut default_content: Vec<&Element> = Vec::new();
-        for el in elements {
-            if el.tag == "template"
-                && let Some(name) = slot_name(el)
-            {
-                let content = self.single_root(&el.children)?;
-                builder = quote! { #builder.with(#name, move |__backend| #content) };
-            } else {
-                default_content.push(el);
+        for child in &el.children {
+            let Node::Element(child_el) = child else {
+                continue;
+            };
+            match slot_directive(child_el) {
+                Some((name, binding)) if child_el.tag == "template" => {
+                    let content = self.single_root(&child_el.children)?;
+                    let setter = Ident::new(&format!("with_{name}"), Span::call_site());
+                    if binding.is_empty() {
+                        // A plain named slot: no payload, bound as `()`.
+                        setters.push(quote! { .#setter(move |__backend, ()| #content) });
+                    } else {
+                        let pat: TokenStream = binding
+                            .parse()
+                            .map_err(|e| format!("invalid v-slot binding `{binding}`: {e}"))?;
+                        setters.push(quote! { .#setter(move |__backend, #pat| #content) });
+                    }
+                }
+                _ => default_content.push(child_el),
             }
         }
         match default_content.as_slice() {
             [] => {}
             [only] => {
                 let content = self.element(only)?;
-                builder = quote! { #builder.with("default", move |__backend| #content) };
+                setters.push(quote! { .with_default(move |__backend, ()| #content) });
             }
             _ => return Err("default slot content must be a single root element".to_string()),
         }
-        Ok(Some(builder))
+
+        let mut args = vec![quote! { __backend.clone() }];
+        if !fields.is_empty() {
+            let props = Ident::new(&format!("{}Props", el.tag), Span::call_site());
+            args.push(quote! { #props { #(#fields),* } });
+        }
+        let slots = Ident::new(&format!("{}Slots", el.tag), Span::call_site());
+        args.push(quote! { #slots::for_backend(&__backend) #(#setters)* });
+        Ok(quote! { #component(#(#args),*) })
+    }
+
+    /// The fallback a `<slot>` renders when the parent provided nothing: its own
+    /// child element, or an empty anchor if it has none.
+    fn slot_fallback(&self, el: &Element) -> Result<TokenStream, String> {
+        let elements: Vec<&Element> = el
+            .children
+            .iter()
+            .filter_map(|n| match n {
+                Node::Element(e) => Some(e),
+                _ => None,
+            })
+            .collect();
+        match elements.as_slice() {
+            [] => Ok(quote! { ::vue_rs_dom::Backend::create_anchor(&__backend) }),
+            [only] => self.element(only),
+            _ => Err("slot fallback content must be a single root element".to_string()),
+        }
     }
 
     /// The single root element among `children` (used for slot template content).
@@ -233,10 +325,11 @@ fn is_component(tag: &str) -> bool {
     tag.chars().next().is_some_and(|c| c.is_ascii_uppercase())
 }
 
-/// The slot name from a `<template v-slot:name>` element, if present.
-fn slot_name(el: &Element) -> Option<&str> {
+/// The slot name and binding pattern from a `<template v-slot:name="pat">`
+/// element, if present. The binding is empty for a plain `<template v-slot:name>`.
+fn slot_directive(el: &Element) -> Option<(&str, &str)> {
     el.attrs.iter().find_map(|attr| match attr {
-        Attr::Static { name, .. } => name.strip_prefix("v-slot:"),
+        Attr::Static { name, value } => name.strip_prefix("v-slot:").map(|n| (n, value.as_str())),
         _ => None,
     })
 }
