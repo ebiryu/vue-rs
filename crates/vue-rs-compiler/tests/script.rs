@@ -51,3 +51,30 @@ fn ref_call_inside_closure_is_mapped() {
         quote! { let f = move || { let c = signal(1); }; }.to_string()
     );
 }
+
+#[test]
+fn watch_effect_call_maps_to_effect() {
+    let out = rewrite_script_sugar("watchEffect(move || { count.get(); });").unwrap();
+    assert_eq!(
+        out.to_string(),
+        quote! { effect(move || { count.get(); }); }.to_string()
+    );
+}
+
+#[test]
+fn watch_effect_import_path_maps_to_effect() {
+    let out = rewrite_script_sugar("use vue_rs_reactive::watchEffect;").unwrap();
+    assert_eq!(
+        out.to_string(),
+        quote! { use vue_rs_reactive::effect; }.to_string()
+    );
+}
+
+#[test]
+fn watch_effect_as_bare_identifier_is_preserved() {
+    let out = rewrite_script_sugar("let watchEffect = 1;").unwrap();
+    assert_eq!(
+        out.to_string(),
+        quote! { let watchEffect = 1; }.to_string()
+    );
+}

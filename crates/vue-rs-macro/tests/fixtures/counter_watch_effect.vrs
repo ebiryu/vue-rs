@@ -1,0 +1,13 @@
+<template>
+  <button @click="increment()">{{ count.get() }}/{{ doubled.get() }}</button>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::ref;
+use vue_rs_reactive::watchEffect;
+
+let count = ref(0);
+let doubled = ref(0);
+let increment = move || count.set(count.get() + 1);
+watchEffect(move || doubled.set(count.get() * 2));
+</script>

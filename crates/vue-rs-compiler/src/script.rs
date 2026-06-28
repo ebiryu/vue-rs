@@ -5,6 +5,10 @@
 //! (and `use ...::ref`) and maps the constructor call and its import path to
 //! `signal`. Genuine `ref` binding patterns (`let ref x`, `Some(ref v)`) are
 //! left untouched.
+//!
+//! Vue's `watchEffect` maps the same way onto the core's `effect`: a call
+//! `watchEffect(...)` or import-path segment `...::watchEffect` becomes
+//! `effect`, while a bare identifier of that name is left alone.
 
 use proc_macro2::{Delimiter, Group, Ident, TokenStream, TokenTree};
 
@@ -18,20 +22,29 @@ pub fn rewrite_script_sugar(script: &str) -> Result<TokenStream, CompileError> {
     Ok(rewrite_stream(tokens))
 }
 
-/// Walk a token sequence, mapping `ref` to `signal` where it acts as the
-/// constructor (a call `ref(...)`) or an import-path segment (`...::ref`), and
-/// recursing into every delimited group.
+/// Vue authoring spelling → reactive-core name. Each pair is mapped only where
+/// the spelling acts as a call (`name(...)`) or import-path segment (`...::name`).
+const NAME_MAP: &[(&str, &str)] = &[("ref", "signal"), ("watchEffect", "effect")];
+
+/// Walk a token sequence, mapping Vue authoring spellings to their core names
+/// where they act as a call (`name(...)`) or import-path segment (`...::name`),
+/// and recursing into every delimited group. Bare identifiers (including `ref`
+/// binding patterns `let ref x` / `Some(ref v)`) are left untouched.
 fn rewrite_stream(tokens: TokenStream) -> TokenStream {
     let trees: Vec<TokenTree> = tokens.into_iter().collect();
     let mut out: Vec<TokenTree> = Vec::with_capacity(trees.len());
     for (i, tree) in trees.iter().enumerate() {
         match tree {
-            TokenTree::Ident(id) if *id == "ref" => {
-                if is_call(&trees, i) || is_path_segment(&trees, i) {
-                    out.push(TokenTree::Ident(Ident::new("signal", id.span())));
-                } else {
-                    out.push(tree.clone());
-                }
+            TokenTree::Ident(id)
+                if NAME_MAP.iter().any(|(from, _)| *id == from)
+                    && (is_call(&trees, i) || is_path_segment(&trees, i)) =>
+            {
+                let to = NAME_MAP
+                    .iter()
+                    .find(|(from, _)| *id == from)
+                    .map(|(_, to)| *to)
+                    .unwrap();
+                out.push(TokenTree::Ident(Ident::new(to, id.span())));
             }
             TokenTree::Group(g) => {
                 let mut group = Group::new(g.delimiter(), rewrite_stream(g.stream()));
