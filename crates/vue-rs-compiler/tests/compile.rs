@@ -87,7 +87,7 @@ fn event_with_modifiers_becomes_on_opts() {
                     ::vue_rs_dom::EventOptions {
                         prevent_default: true,
                         stop_propagation: true,
-                        once: false,
+                        ..::core::default::Default::default()
                     },
                     move || { save() }
                 )
@@ -106,9 +106,8 @@ fn event_with_once_modifier_becomes_on_opts() {
                 .on_opts(
                     "click",
                     ::vue_rs_dom::EventOptions {
-                        prevent_default: false,
-                        stop_propagation: false,
                         once: true,
+                        ..::core::default::Default::default()
                     },
                     move || { go() }
                 )
@@ -119,8 +118,100 @@ fn event_with_once_modifier_becomes_on_opts() {
 }
 
 #[test]
+fn event_self_capture_passive_modifiers_become_options() {
+    compiles_to(
+        r#"<div @scroll.self.capture.passive="onScroll()">x</div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .on_opts(
+                    "scroll",
+                    ::vue_rs_dom::EventOptions {
+                        self_only: true,
+                        capture: true,
+                        passive: true,
+                        ..::core::default::Default::default()
+                    },
+                    move || { onScroll() }
+                )
+                .text("x")
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn key_modifier_on_keyboard_event_becomes_key_filter() {
+    compiles_to(
+        r#"<input @keyup.enter="submit()" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .on_opts(
+                    "keyup",
+                    ::vue_rs_dom::EventOptions {
+                        keys: &["Enter"],
+                        ..::core::default::Default::default()
+                    },
+                    move || { submit() }
+                )
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn arrow_key_alias_maps_to_event_key_on_keyboard_event() {
+    compiles_to(
+        r#"<input @keydown.left="prev()" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .on_opts(
+                    "keydown",
+                    ::vue_rs_dom::EventOptions {
+                        keys: &["ArrowLeft"],
+                        ..::core::default::Default::default()
+                    },
+                    move || { prev() }
+                )
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn mouse_button_modifier_on_mouse_event_becomes_button_filter() {
+    compiles_to(
+        r#"<button @click.right="ctx()">x</button>"#,
+        quote! {
+            El::new(__backend.clone(), "button")
+                .on_opts(
+                    "click",
+                    ::vue_rs_dom::EventOptions {
+                        buttons: &[2u16],
+                        ..::core::default::Default::default()
+                    },
+                    move || { ctx() }
+                )
+                .text("x")
+                .finish()
+        },
+    );
+}
+
+#[test]
 fn event_with_unknown_modifier_errors() {
     assert!(compile_template(r#"<button @click.bogus="go()">x</button>"#).is_err());
+}
+
+#[test]
+fn key_modifier_on_mouse_event_errors() {
+    // `.enter` is a key modifier but `click` is a mouse event: no key context.
+    assert!(compile_template(r#"<button @click.enter="go()">x</button>"#).is_err());
+}
+
+#[test]
+fn mouse_button_modifier_on_keyboard_event_errors() {
+    // `.middle` is a mouse-button modifier; not valid on a keyboard event.
+    assert!(compile_template(r#"<input @keyup.middle="go()" />"#).is_err());
 }
 
 #[test]

@@ -477,42 +477,110 @@ fn gen_attr(attr: &Attr, base_style: Option<&TokenStream>) -> Result<TokenStream
         }
         Attr::Event { name, handler } => {
             let handler = parse_expr(handler)?;
-            let (event, modifiers) = parse_event_name(name)?;
+            let mut parts = name.split('.');
+            let event = parts.next().unwrap_or("");
+            let modifiers: Vec<&str> = parts.collect();
             if modifiers.is_empty() {
                 Ok(quote! { .on(#event, move || { #handler }) })
             } else {
-                let prevent_default = modifiers.contains(&"prevent");
-                let stop_propagation = modifiers.contains(&"stop");
-                let once = modifiers.contains(&"once");
-                Ok(quote! {
-                    .on_opts(
-                        #event,
-                        ::vue_rs_dom::EventOptions {
-                            prevent_default: #prevent_default,
-                            stop_propagation: #stop_propagation,
-                            once: #once,
-                        },
-                        move || { #handler }
-                    )
-                })
+                let opts = build_event_options(event, &modifiers, name)?;
+                Ok(quote! { .on_opts(#event, #opts, move || { #handler }) })
             }
         }
     }
 }
 
-/// Split an `@event` directive name into the event name and its modifiers,
-/// e.g. `submit.prevent.stop` → (`submit`, [`prevent`, `stop`]). Rejects unknown
-/// modifiers so typos surface at compile time.
-fn parse_event_name(name: &str) -> Result<(&str, Vec<&str>), String> {
-    let mut parts = name.split('.');
-    let event = parts.next().unwrap_or("");
-    let modifiers: Vec<&str> = parts.collect();
-    for m in &modifiers {
-        if !matches!(*m, "prevent" | "stop" | "once") {
-            return Err(format!("unknown event modifier `.{m}` on `@{name}`"));
+/// Build the `EventOptions` literal for an `@event`'s modifiers. Only set fields
+/// are emitted (the rest fall back via `..Default::default()`). Key vs.
+/// mouse-button modifiers are disambiguated by the event name; unknown modifiers
+/// are a compile error so typos surface early.
+fn build_event_options(
+    event: &str,
+    modifiers: &[&str],
+    full: &str,
+) -> Result<TokenStream, String> {
+    let mut fields: Vec<TokenStream> = Vec::new();
+    let mut keys: Vec<&'static str> = Vec::new();
+    let mut buttons: Vec<u16> = Vec::new();
+    let keyboard = is_keyboard_event(event);
+    let mouse = is_mouse_event(event);
+    for &m in modifiers {
+        match m {
+            "prevent" => fields.push(quote! { prevent_default: true }),
+            "stop" => fields.push(quote! { stop_propagation: true }),
+            "once" => fields.push(quote! { once: true }),
+            "capture" => fields.push(quote! { capture: true }),
+            "passive" => fields.push(quote! { passive: true }),
+            "self" => fields.push(quote! { self_only: true }),
+            other => {
+                if mouse && let Some(b) = mouse_button(other) {
+                    buttons.push(b);
+                } else if keyboard && let Some(k) = key_name(other) {
+                    keys.push(k);
+                } else {
+                    return Err(format!("unknown event modifier `.{other}` on `@{full}`"));
+                }
+            }
         }
     }
-    Ok((event, modifiers))
+    if !keys.is_empty() {
+        fields.push(quote! { keys: &[ #(#keys),* ] });
+    }
+    if !buttons.is_empty() {
+        fields.push(quote! { buttons: &[ #(#buttons),* ] });
+    }
+    Ok(quote! {
+        ::vue_rs_dom::EventOptions { #(#fields,)* ..::core::default::Default::default() }
+    })
+}
+
+fn is_keyboard_event(event: &str) -> bool {
+    matches!(event, "keyup" | "keydown" | "keypress")
+}
+
+fn is_mouse_event(event: &str) -> bool {
+    matches!(
+        event,
+        "click"
+            | "dblclick"
+            | "auxclick"
+            | "mousedown"
+            | "mouseup"
+            | "mousemove"
+            | "mouseenter"
+            | "mouseleave"
+            | "mouseover"
+            | "mouseout"
+            | "contextmenu"
+    )
+}
+
+/// Map a mouse-button modifier to its `MouseEvent.button` value.
+fn mouse_button(m: &str) -> Option<u16> {
+    match m {
+        "left" => Some(0),
+        "middle" => Some(1),
+        "right" => Some(2),
+        _ => None,
+    }
+}
+
+/// Map a key modifier to the matching `KeyboardEvent.key` string.
+fn key_name(m: &str) -> Option<&'static str> {
+    Some(match m {
+        "enter" => "Enter",
+        "esc" | "escape" => "Escape",
+        "tab" => "Tab",
+        "space" => " ",
+        "delete" => "Delete",
+        "up" => "ArrowUp",
+        "down" => "ArrowDown",
+        "left" => "ArrowLeft",
+        "right" => "ArrowRight",
+        "home" => "Home",
+        "end" => "End",
+        _ => return None,
+    })
 }
 
 /// Whether `attr` sets the element's `style` (static `style="…"` or `:style="…"`).

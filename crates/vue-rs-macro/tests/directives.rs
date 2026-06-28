@@ -1,7 +1,7 @@
 //! End-to-end: `v-if` / `v-else` / `v-for` / `v-model` compile through `view!`
 //! and stay reactive on `MockDom`.
 
-use vue_rs_dom::{El, MockDom, RawHtml};
+use vue_rs_dom::{El, MockDom, MockEvent, RawHtml};
 use vue_rs_macro::view;
 use vue_rs_reactive::signal;
 
@@ -143,6 +143,56 @@ fn event_once_modifier_fires_a_single_time() {
     dom.dispatch(node, "click");
     dom.dispatch(node, "click");
     assert_eq!(n.get(), 1);
+}
+
+#[test]
+fn key_modifier_runs_handler_only_for_matching_key() {
+    let dom = MockDom::new();
+    let submitted = signal(0);
+    let node = view!(
+        dom.clone(),
+        r#"<input @keyup.enter="submitted.set(submitted.get() + 1)" />"#
+    );
+    dom.dispatch_event(
+        node,
+        "keyup",
+        MockEvent {
+            key: Some("a".to_string()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(submitted.get(), 0, "other keys ignored");
+    dom.dispatch_event(
+        node,
+        "keyup",
+        MockEvent {
+            key: Some("Enter".to_string()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(submitted.get(), 1, "Enter fires the handler");
+}
+
+#[test]
+fn self_modifier_ignores_events_from_descendants() {
+    let dom = MockDom::new();
+    let hits = signal(0);
+    let node = view!(
+        dom.clone(),
+        r#"<div @click.self="hits.set(hits.get() + 1)"><span>inner</span></div>"#
+    );
+    let inner = dom.find("span").expect("inner span");
+    dom.dispatch_event(
+        node,
+        "click",
+        MockEvent {
+            target: Some(inner),
+            ..Default::default()
+        },
+    );
+    assert_eq!(hits.get(), 0, "click bubbling from a child is ignored");
+    dom.dispatch(node, "click");
+    assert_eq!(hits.get(), 1, "click on the element itself fires");
 }
 
 #[test]

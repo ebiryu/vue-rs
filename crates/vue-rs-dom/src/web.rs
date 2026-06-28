@@ -63,8 +63,9 @@ impl WebDom {
 
 impl Backend for WebDom {
     type Node = web_sys::Node;
-    /// The event name plus the live JS closure; dropping it releases the closure.
-    type Listener = (String, Closure<dyn FnMut(web_sys::Event)>);
+    /// The event name, its capture flag (needed to detach), and the live JS
+    /// closure; dropping the closure releases it.
+    type Listener = (String, bool, Closure<dyn FnMut(web_sys::Event)>);
 
     fn create_element(&self, tag: &str) -> web_sys::Node {
         document()
@@ -125,6 +126,28 @@ impl Backend for WebDom {
         handler: Rc<dyn Fn(&str)>,
     ) -> Self::Listener {
         let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+            // Guard modifiers short-circuit before prevent/stop and the handler.
+            if options.self_only {
+                let same = match (event.target(), event.current_target()) {
+                    (Some(t), Some(c)) => js_sys::Object::is(t.as_ref(), c.as_ref()),
+                    _ => false,
+                };
+                if !same {
+                    return;
+                }
+            }
+            if !options.keys.is_empty() {
+                let key = event.dyn_ref::<web_sys::KeyboardEvent>().map(|e| e.key());
+                if !key.is_some_and(|k| options.keys.contains(&k.as_str())) {
+                    return;
+                }
+            }
+            if !options.buttons.is_empty() {
+                let button = event.dyn_ref::<web_sys::MouseEvent>().map(|e| e.button());
+                if !button.is_some_and(|b| options.buttons.iter().any(|w| *w as i16 == b)) {
+                    return;
+                }
+            }
             if options.prevent_default {
                 event.prevent_default();
             }
@@ -141,6 +164,8 @@ impl Backend for WebDom {
         let target: &web_sys::EventTarget = node.unchecked_ref();
         let listener_options = web_sys::AddEventListenerOptions::new();
         listener_options.set_once(options.once);
+        listener_options.set_capture(options.capture);
+        listener_options.set_passive(options.passive);
         target
             .add_event_listener_with_callback_and_add_event_listener_options(
                 event,
@@ -150,14 +175,18 @@ impl Backend for WebDom {
             .expect("add_event_listener");
         // Keep the closure alive by handing it back to the caller, which holds it
         // until `remove_event_listener` drops it together with the listener.
-        (event.to_string(), closure)
+        (event.to_string(), options.capture, closure)
     }
 
     fn remove_event_listener(&self, node: &web_sys::Node, listener: Self::Listener) {
-        let (event, closure) = listener;
+        let (event, capture, closure) = listener;
         let target: &web_sys::EventTarget = node.unchecked_ref();
         target
-            .remove_event_listener_with_callback(&event, closure.as_ref().unchecked_ref())
+            .remove_event_listener_with_callback_and_bool(
+                &event,
+                closure.as_ref().unchecked_ref(),
+                capture,
+            )
             .expect("remove_event_listener");
         // `closure` is dropped here, freeing the boxed Rust handler.
     }

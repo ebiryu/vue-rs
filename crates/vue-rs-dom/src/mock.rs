@@ -15,10 +15,24 @@ type Listener = (usize, String, EventOptions, Handler);
 /// real event object.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct DispatchOutcome {
-    /// A matched listener was registered with `prevent_default`.
+    /// A matched listener (whose guards passed) was registered with `prevent_default`.
     pub default_prevented: bool,
-    /// A matched listener was registered with `stop_propagation`.
+    /// A matched listener (whose guards passed) was registered with `stop_propagation`.
     pub propagation_stopped: bool,
+}
+
+/// Simulated event data for [`MockDom::dispatch_event`], standing in for the
+/// fields a real DOM event would carry. Used to exercise the guard modifiers
+/// (`.self` / key / mouse-button) without a browser.
+#[derive(Clone, Default, Debug)]
+pub struct MockEvent {
+    /// `event.key` (key modifiers). `None` means the event carries no key.
+    pub key: Option<String>,
+    /// `event.button` (mouse-button modifiers). `None` means no button.
+    pub button: Option<u16>,
+    /// The node the event originated on (`event.target`). `None` means the event
+    /// targeted the dispatched node itself, so `.self` passes.
+    pub target: Option<usize>,
 }
 
 enum NodeData {
@@ -36,6 +50,21 @@ enum NodeData {
     },
     /// An invisible placeholder used to position dynamic content.
     Anchor,
+}
+
+/// Whether the guard modifiers (`.self` / key / mouse-button) pass for a
+/// listener on `node` given the simulated event `ev`.
+fn guards_pass(opts: &EventOptions, node: usize, ev: &MockEvent) -> bool {
+    if opts.self_only && ev.target.unwrap_or(node) != node {
+        return false;
+    }
+    if !opts.keys.is_empty() && !ev.key.as_deref().is_some_and(|k| opts.keys.contains(&k)) {
+        return false;
+    }
+    if !opts.buttons.is_empty() && !ev.button.is_some_and(|b| opts.buttons.contains(&b)) {
+        return false;
+    }
+    true
 }
 
 /// Escape a text node's content: `&`, `<`, `>`.
@@ -109,16 +138,34 @@ impl MockDom {
         nodes.iter().position(|n| matches!(n, NodeData::Element { tag: t, .. } if t == tag))
     }
 
-    /// Invoke listeners registered for `event` on `node` with no value.
+    /// Invoke listeners registered for `event` on `node` with no value and a
+    /// self-targeted event (so `.self` passes, no key/button).
     pub fn dispatch(&self, node: usize, event: &str) -> DispatchOutcome {
         self.dispatch_value(node, event, "")
     }
 
     /// Invoke listeners registered for `event` on `node`, passing `value`
-    /// (e.g. simulating typing into an input). Applies `once` (removing the
-    /// listener after it fires) and reports the prevent/stop modifiers of the
-    /// matched listeners.
+    /// (e.g. simulating typing into an input), with a self-targeted event.
     pub fn dispatch_value(&self, node: usize, event: &str, value: &str) -> DispatchOutcome {
+        self.dispatch_full(node, event, value, &MockEvent::default())
+    }
+
+    /// Invoke listeners for `event` on `node` with simulated event data, so the
+    /// guard modifiers (`.self` / key / mouse-button) can be exercised.
+    pub fn dispatch_event(&self, node: usize, event: &str, ev: MockEvent) -> DispatchOutcome {
+        self.dispatch_full(node, event, "", &ev)
+    }
+
+    /// Shared dispatch: applies `once` (removing the listener once it fires),
+    /// evaluates the guard modifiers, and reports the prevent/stop modifiers of
+    /// the listeners whose guards passed.
+    fn dispatch_full(
+        &self,
+        node: usize,
+        event: &str,
+        value: &str,
+        ev: &MockEvent,
+    ) -> DispatchOutcome {
         let matched: Vec<(usize, EventOptions, Handler)> = {
             let nodes = self.nodes.borrow();
             match &nodes[node] {
@@ -133,12 +180,18 @@ impl MockDom {
         let mut outcome = DispatchOutcome::default();
         let mut spent: Vec<usize> = Vec::new();
         for (id, opts, handler) in matched {
-            outcome.default_prevented |= opts.prevent_default;
-            outcome.propagation_stopped |= opts.stop_propagation;
-            handler(value);
+            // The listener's closure "fires" (matched the event name), so a
+            // `once` listener is removed even if a guard skips the handler,
+            // mirroring the browser's `{ once: true }`.
             if opts.once {
                 spent.push(id);
             }
+            if !guards_pass(&opts, node, ev) {
+                continue;
+            }
+            outcome.default_prevented |= opts.prevent_default;
+            outcome.propagation_stopped |= opts.stop_propagation;
+            handler(value);
         }
         if !spent.is_empty()
             && let NodeData::Element { listeners, .. } = &mut self.nodes.borrow_mut()[node]

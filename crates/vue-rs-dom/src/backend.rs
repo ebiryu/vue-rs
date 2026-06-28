@@ -1,8 +1,15 @@
 use std::rc::Rc;
 
-/// Modifiers that change how an event listener behaves (the `@event.prevent` /
-/// `.stop` / `.once` directive modifiers). Applied by the backend when the
-/// event fires; the handler itself is unaware of them.
+/// Modifiers that change how an event listener behaves (the `@event.*` directive
+/// modifiers). Applied by the backend when the event fires; the handler itself is
+/// unaware of them.
+///
+/// Fields fall in two groups. The first runs the handler then acts (or changes
+/// registration): `prevent_default`, `stop_propagation`, `once`, `capture`,
+/// `passive`. The rest are *guards* — when set, the handler runs only if the
+/// event matches: `self_only` (target is this element), `keys` (`event.key` is
+/// one of these), `buttons` (`event.button` is one of these). An empty `keys` /
+/// `buttons` means no filtering on that axis.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct EventOptions {
     /// Call the event's `preventDefault()` before invoking the handler.
@@ -11,6 +18,19 @@ pub struct EventOptions {
     pub stop_propagation: bool,
     /// Detach the listener after it fires once.
     pub once: bool,
+    /// Register the listener for the capture phase.
+    pub capture: bool,
+    /// Register the listener as passive (it will not call `preventDefault`).
+    pub passive: bool,
+    /// Run only when the event's target is the element itself (the `.self`
+    /// modifier), not a descendant.
+    pub self_only: bool,
+    /// Run only when `event.key` matches one of these (the key modifiers, e.g.
+    /// `@keyup.enter`). Empty means no key filtering.
+    pub keys: &'static [&'static str],
+    /// Run only when `event.button` matches one of these (the mouse-button
+    /// modifiers, e.g. `@click.right`). Empty means no button filtering.
+    pub buttons: &'static [u16],
 }
 
 /// Abstraction over a tree of DOM-like nodes. Implemented by [`crate::MockDom`]

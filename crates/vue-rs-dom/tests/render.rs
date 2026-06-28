@@ -1,7 +1,7 @@
 //! Contract for DOM rendering primitives, exercised against the in-memory
 //! `MockDom` backend so the reactive wiring is testable without a browser.
 
-use vue_rs_dom::{El, EventOptions, MockDom, RawHtml};
+use vue_rs_dom::{El, EventOptions, MockDom, MockEvent, RawHtml};
 use vue_rs_reactive::{create_root, signal};
 
 #[test]
@@ -162,6 +162,104 @@ fn on_opts_once_runs_handler_only_once() {
     dom.dispatch(node, "click");
     dom.dispatch(node, "click");
     assert_eq!(count.get(), 1, "once listener fires a single time");
+}
+
+#[test]
+fn on_opts_self_only_runs_when_target_is_the_element() {
+    let dom = MockDom::new();
+    let count = signal(0);
+    let node = El::new(dom.clone(), "div")
+        .on_opts(
+            "click",
+            EventOptions {
+                self_only: true,
+                ..Default::default()
+            },
+            move || count.set(count.get() + 1),
+        )
+        .finish();
+    // Target is a different node (a descendant): the guard skips the handler.
+    let child = El::new(dom.clone(), "span").finish();
+    dom.dispatch_event(
+        node,
+        "click",
+        MockEvent {
+            target: Some(child),
+            ..Default::default()
+        },
+    );
+    assert_eq!(count.get(), 0, "self guard skips events from descendants");
+    // Target is the element itself: the handler runs.
+    dom.dispatch(node, "click");
+    assert_eq!(count.get(), 1);
+}
+
+#[test]
+fn on_opts_key_filter_runs_only_for_matching_key() {
+    let dom = MockDom::new();
+    let count = signal(0);
+    let node = El::new(dom.clone(), "input")
+        .on_opts(
+            "keyup",
+            EventOptions {
+                keys: &["Enter"],
+                ..Default::default()
+            },
+            move || count.set(count.get() + 1),
+        )
+        .finish();
+    dom.dispatch_event(
+        node,
+        "keyup",
+        MockEvent {
+            key: Some("a".to_string()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(count.get(), 0, "non-matching key is ignored");
+    dom.dispatch_event(
+        node,
+        "keyup",
+        MockEvent {
+            key: Some("Enter".to_string()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(count.get(), 1, "matching key runs the handler");
+}
+
+#[test]
+fn on_opts_mouse_button_filter_runs_only_for_matching_button() {
+    let dom = MockDom::new();
+    let count = signal(0);
+    let node = El::new(dom.clone(), "button")
+        .on_opts(
+            "click",
+            EventOptions {
+                buttons: &[2],
+                ..Default::default()
+            },
+            move || count.set(count.get() + 1),
+        )
+        .finish();
+    dom.dispatch_event(
+        node,
+        "click",
+        MockEvent {
+            button: Some(0),
+            ..Default::default()
+        },
+    );
+    assert_eq!(count.get(), 0, "left button ignored by right-button filter");
+    dom.dispatch_event(
+        node,
+        "click",
+        MockEvent {
+            button: Some(2),
+            ..Default::default()
+        },
+    );
+    assert_eq!(count.get(), 1, "right button runs the handler");
 }
 
 #[test]

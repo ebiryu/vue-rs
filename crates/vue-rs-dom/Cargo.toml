@@ -24,6 +24,8 @@ web-sys = { version = "0.3", optional = true, features = [
     "Comment",
     "Event",
     "EventTarget",
+    "KeyboardEvent",
+    "MouseEvent",
     "AddEventListenerOptions",
     "HtmlInputElement",
 ] }
