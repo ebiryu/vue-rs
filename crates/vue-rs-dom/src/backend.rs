@@ -8,8 +8,10 @@ use std::rc::Rc;
 /// registration): `prevent_default`, `stop_propagation`, `once`, `capture`,
 /// `passive`. The rest are *guards* — when set, the handler runs only if the
 /// event matches: `self_only` (target is this element), `keys` (`event.key` is
-/// one of these), `buttons` (`event.button` is one of these). An empty `keys` /
-/// `buttons` means no filtering on that axis.
+/// one of these), `buttons` (`event.button` is one of these), the system-modifier
+/// flags `ctrl`/`alt`/`shift`/`meta` (the matching modifier key is held), and
+/// `exact` (only the requested system modifiers are held, none other). An empty
+/// `keys` / `buttons` means no filtering on that axis.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct EventOptions {
     /// Call the event's `preventDefault()` before invoking the handler.
@@ -31,6 +33,37 @@ pub struct EventOptions {
     /// Run only when `event.button` matches one of these (the mouse-button
     /// modifiers, e.g. `@click.right`). Empty means no button filtering.
     pub buttons: &'static [u16],
+    /// Run only when the Control key is held (the `.ctrl` modifier).
+    pub ctrl: bool,
+    /// Run only when the Alt key is held (the `.alt` modifier).
+    pub alt: bool,
+    /// Run only when the Shift key is held (the `.shift` modifier).
+    pub shift: bool,
+    /// Run only when the Meta key is held (the `.meta` modifier).
+    pub meta: bool,
+    /// Require *exactly* the requested system modifiers (the `.exact` modifier):
+    /// every system modifier not set among `ctrl`/`alt`/`shift`/`meta` must be
+    /// absent for the handler to run.
+    pub exact: bool,
+}
+
+impl EventOptions {
+    /// Whether the system-modifier guards (`.ctrl`/`.alt`/`.shift`/`.meta` and
+    /// `.exact`) pass given which modifier keys are held, in
+    /// `[ctrl, alt, shift, meta]` order. Each requested modifier must be held;
+    /// with `exact`, no modifier outside the requested set may be held.
+    pub fn system_modifiers_pass(&self, held: [bool; 4]) -> bool {
+        let required = [self.ctrl, self.alt, self.shift, self.meta];
+        for i in 0..4 {
+            if required[i] && !held[i] {
+                return false;
+            }
+            if self.exact && !required[i] && held[i] {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// Abstraction over a tree of DOM-like nodes. Implemented by [`crate::MockDom`]

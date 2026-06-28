@@ -33,6 +33,14 @@ pub struct MockEvent {
     /// The node the event originated on (`event.target`). `None` means the event
     /// targeted the dispatched node itself, so `.self` passes.
     pub target: Option<usize>,
+    /// Whether the Control key is held (`event.ctrlKey`).
+    pub ctrl: bool,
+    /// Whether the Alt key is held (`event.altKey`).
+    pub alt: bool,
+    /// Whether the Shift key is held (`event.shiftKey`).
+    pub shift: bool,
+    /// Whether the Meta key is held (`event.metaKey`).
+    pub meta: bool,
 }
 
 enum NodeData {
@@ -62,6 +70,9 @@ fn guards_pass(opts: &EventOptions, node: usize, ev: &MockEvent) -> bool {
         return false;
     }
     if !opts.buttons.is_empty() && !ev.button.is_some_and(|b| opts.buttons.contains(&b)) {
+        return false;
+    }
+    if !opts.system_modifiers_pass([ev.ctrl, ev.alt, ev.shift, ev.meta]) {
         return false;
     }
     true

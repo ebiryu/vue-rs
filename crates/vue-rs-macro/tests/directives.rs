@@ -174,6 +174,67 @@ fn key_modifier_runs_handler_only_for_matching_key() {
 }
 
 #[test]
+fn system_modifier_runs_handler_only_when_modifier_is_held() {
+    let dom = MockDom::new();
+    let saved = signal(0);
+    let node = view!(
+        dom.clone(),
+        r#"<input @keyup.ctrl.enter="saved.set(saved.get() + 1)" />"#
+    );
+    // Enter without ctrl: the system-modifier guard skips the handler.
+    dom.dispatch_event(
+        node,
+        "keyup",
+        MockEvent {
+            key: Some("Enter".to_string()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(saved.get(), 0, "Enter alone is ignored without ctrl");
+    // ctrl+Enter: both guards pass.
+    dom.dispatch_event(
+        node,
+        "keyup",
+        MockEvent {
+            key: Some("Enter".to_string()),
+            ctrl: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(saved.get(), 1, "ctrl+Enter fires the handler");
+}
+
+#[test]
+fn exact_modifier_runs_handler_only_for_the_exact_modifier_set() {
+    let dom = MockDom::new();
+    let hits = signal(0);
+    let node = view!(
+        dom.clone(),
+        r#"<button @click.ctrl.exact="hits.set(hits.get() + 1)">x</button>"#
+    );
+    // ctrl plus an extra shift: `.exact` rejects the surplus modifier.
+    dom.dispatch_event(
+        node,
+        "click",
+        MockEvent {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(hits.get(), 0, "extra modifier rejected by .exact");
+    dom.dispatch_event(
+        node,
+        "click",
+        MockEvent {
+            ctrl: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(hits.get(), 1, "exactly ctrl fires the handler");
+}
+
+#[test]
 fn self_modifier_ignores_events_from_descendants() {
     let dom = MockDom::new();
     let hits = signal(0);

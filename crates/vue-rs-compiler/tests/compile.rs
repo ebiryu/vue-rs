@@ -198,6 +198,48 @@ fn mouse_button_modifier_on_mouse_event_becomes_button_filter() {
 }
 
 #[test]
+fn system_modifiers_become_options_on_any_event() {
+    compiles_to(
+        r#"<div @click.ctrl.shift="go()">x</div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .on_opts(
+                    "click",
+                    ::vue_rs_dom::EventOptions {
+                        ctrl: true,
+                        shift: true,
+                        ..::core::default::Default::default()
+                    },
+                    move || { go() }
+                )
+                .text("x")
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn exact_modifier_becomes_option() {
+    compiles_to(
+        r#"<div @click.ctrl.exact="go()">x</div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .on_opts(
+                    "click",
+                    ::vue_rs_dom::EventOptions {
+                        ctrl: true,
+                        exact: true,
+                        ..::core::default::Default::default()
+                    },
+                    move || { go() }
+                )
+                .text("x")
+                .finish()
+        },
+    );
+}
+
+#[test]
 fn event_with_unknown_modifier_errors() {
     assert!(compile_template(r#"<button @click.bogus="go()">x</button>"#).is_err());
 }

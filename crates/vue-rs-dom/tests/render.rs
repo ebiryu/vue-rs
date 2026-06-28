@@ -263,6 +263,74 @@ fn on_opts_mouse_button_filter_runs_only_for_matching_button() {
 }
 
 #[test]
+fn on_opts_system_modifier_runs_only_when_modifier_key_is_pressed() {
+    let dom = MockDom::new();
+    let count = signal(0);
+    let node = El::new(dom.clone(), "button")
+        .on_opts(
+            "click",
+            EventOptions {
+                ctrl: true,
+                ..Default::default()
+            },
+            move || count.set(count.get() + 1),
+        )
+        .finish();
+    // No ctrl held: the guard skips the handler.
+    dom.dispatch_event(node, "click", MockEvent::default());
+    assert_eq!(count.get(), 0, "plain click ignored when .ctrl is required");
+    // ctrl held (plus an irrelevant shift): the handler runs.
+    dom.dispatch_event(
+        node,
+        "click",
+        MockEvent {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(count.get(), 1, "ctrl+click runs the handler");
+}
+
+#[test]
+fn on_opts_exact_modifier_requires_the_exact_modifier_set() {
+    let dom = MockDom::new();
+    let count = signal(0);
+    let node = El::new(dom.clone(), "button")
+        .on_opts(
+            "click",
+            EventOptions {
+                ctrl: true,
+                exact: true,
+                ..Default::default()
+            },
+            move || count.set(count.get() + 1),
+        )
+        .finish();
+    // ctrl + an extra shift: exact rejects the surplus modifier.
+    dom.dispatch_event(
+        node,
+        "click",
+        MockEvent {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(count.get(), 0, "exact rejects extra modifiers");
+    // exactly ctrl and nothing else: the handler runs.
+    dom.dispatch_event(
+        node,
+        "click",
+        MockEvent {
+            ctrl: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(count.get(), 1, "exact ctrl-only runs the handler");
+}
+
+#[test]
 fn plain_on_reports_no_modifiers() {
     let dom = MockDom::new();
     let node = El::new(dom.clone(), "button").on("click", || {}).finish();

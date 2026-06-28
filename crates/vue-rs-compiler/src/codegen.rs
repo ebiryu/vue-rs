@@ -512,6 +512,11 @@ fn build_event_options(
             "capture" => fields.push(quote! { capture: true }),
             "passive" => fields.push(quote! { passive: true }),
             "self" => fields.push(quote! { self_only: true }),
+            "ctrl" => fields.push(quote! { ctrl: true }),
+            "alt" => fields.push(quote! { alt: true }),
+            "shift" => fields.push(quote! { shift: true }),
+            "meta" => fields.push(quote! { meta: true }),
+            "exact" => fields.push(quote! { exact: true }),
             other => {
                 if mouse && let Some(b) = mouse_button(other) {
                     buttons.push(b);

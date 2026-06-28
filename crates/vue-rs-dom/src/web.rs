@@ -10,6 +10,19 @@ use crate::backend::{Backend, EventOptions};
 #[derive(Clone, Default)]
 pub struct WebDom;
 
+/// Read the system-modifier state (`[ctrl, alt, shift, meta]`) off an event.
+/// Keyboard and mouse events both carry these flags; other event types report
+/// no modifiers held.
+fn modifier_states(event: &web_sys::Event) -> [bool; 4] {
+    if let Some(e) = event.dyn_ref::<web_sys::MouseEvent>() {
+        [e.ctrl_key(), e.alt_key(), e.shift_key(), e.meta_key()]
+    } else if let Some(e) = event.dyn_ref::<web_sys::KeyboardEvent>() {
+        [e.ctrl_key(), e.alt_key(), e.shift_key(), e.meta_key()]
+    } else {
+        [false; 4]
+    }
+}
+
 fn document() -> web_sys::Document {
     web_sys::window()
         .expect("no window")
@@ -147,6 +160,13 @@ impl Backend for WebDom {
                 if !button.is_some_and(|b| options.buttons.iter().any(|w| *w as i16 == b)) {
                     return;
                 }
+            }
+            // The leading disjunction skips the event downcast when no
+            // system-modifier guard is requested (the common case).
+            if (options.ctrl || options.alt || options.shift || options.meta || options.exact)
+                && !options.system_modifiers_pass(modifier_states(&event))
+            {
+                return;
             }
             if options.prevent_default {
                 event.prevent_default();
