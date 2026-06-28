@@ -77,6 +77,20 @@ fn event_handler_becomes_on() {
 }
 
 #[test]
+fn bound_attribute_value_keeps_escaped_quotes() {
+    // A backslash-escaped quote inside the attribute value embeds the delimiter
+    // quote into the Rust expression instead of terminating the value early.
+    compiles_to(
+        r#"<div :class="cls(\"x\")"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attr("class", move || (cls("x")).to_string())
+                .finish()
+        },
+    );
+}
+
+#[test]
 fn self_closing_element() {
     compiles_to(
         r#"<input :value="v()" />"#,

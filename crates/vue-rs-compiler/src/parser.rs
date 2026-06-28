@@ -211,6 +211,28 @@ impl Parser {
             }
             let mut v = String::new();
             while let Some(c) = self.peek() {
+                if c == '\\' {
+                    // A backslash escapes the next character so the delimiter
+                    // quote can appear inside the value (e.g. a Rust string
+                    // literal in a bound expression: `:x="f(\"a\")"`). The
+                    // escaped delimiter collapses to a bare quote; any other
+                    // escape is preserved verbatim so Rust escapes like `\n`
+                    // survive into the expression.
+                    self.pos += 1;
+                    match self.peek() {
+                        Some(n) if n == quote => {
+                            v.push(n);
+                            self.pos += 1;
+                        }
+                        Some(n) => {
+                            v.push('\\');
+                            v.push(n);
+                            self.pos += 1;
+                        }
+                        None => v.push('\\'),
+                    }
+                    continue;
+                }
                 if c == quote {
                     break;
                 }
