@@ -20,6 +20,38 @@ fn scope_css_handles_multiple_selectors() {
 }
 
 #[test]
+fn scope_css_inserts_marker_before_pseudo_class() {
+    assert_eq!(
+        scope_css("button:hover { color: red; }", "abc"),
+        "button[data-v-abc]:hover{ color: red; }"
+    );
+}
+
+#[test]
+fn scope_css_inserts_marker_before_pseudo_element() {
+    assert_eq!(
+        scope_css(".foo::before { content: x; }", "id"),
+        ".foo[data-v-id]::before{ content: x; }"
+    );
+}
+
+#[test]
+fn scope_css_scopes_last_compound_in_descendant_with_pseudo() {
+    assert_eq!(
+        scope_css(".list li:first-child { x: 1; }", "id"),
+        ".list li[data-v-id]:first-child{ x: 1; }"
+    );
+}
+
+#[test]
+fn scope_css_ignores_combinator_chars_inside_pseudo_args() {
+    assert_eq!(
+        scope_css("li:nth-child(2n+1) { x: 1; }", "id"),
+        "li[data-v-id]:nth-child(2n+1){ x: 1; }"
+    );
+}
+
+#[test]
 fn scope_id_is_stable() {
     assert_eq!(scope_id("src/foo.vrs"), scope_id("src/foo.vrs"));
     assert_ne!(scope_id("a"), scope_id("b"));
