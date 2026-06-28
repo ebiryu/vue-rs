@@ -4,7 +4,7 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
-use crate::backend::Backend;
+use crate::backend::{Backend, EventOptions};
 
 /// Browser backend rendering into the real DOM via `web-sys`.
 #[derive(Clone, Default)]
@@ -121,9 +121,16 @@ impl Backend for WebDom {
         &self,
         node: &web_sys::Node,
         event: &str,
+        options: EventOptions,
         handler: Rc<dyn Fn(&str)>,
     ) -> Self::Listener {
         let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+            if options.prevent_default {
+                event.prevent_default();
+            }
+            if options.stop_propagation {
+                event.stop_propagation();
+            }
             let value = event
                 .target()
                 .and_then(|target| target.dyn_into::<web_sys::HtmlInputElement>().ok())
@@ -132,8 +139,14 @@ impl Backend for WebDom {
             handler(&value);
         });
         let target: &web_sys::EventTarget = node.unchecked_ref();
+        let listener_options = web_sys::AddEventListenerOptions::new();
+        listener_options.set_once(options.once);
         target
-            .add_event_listener_with_callback(event, closure.as_ref().unchecked_ref())
+            .add_event_listener_with_callback_and_add_event_listener_options(
+                event,
+                closure.as_ref().unchecked_ref(),
+                &listener_options,
+            )
             .expect("add_event_listener");
         // Keep the closure alive by handing it back to the caller, which holds it
         // until `remove_event_listener` drops it together with the listener.

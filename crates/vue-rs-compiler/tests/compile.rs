@@ -77,6 +77,53 @@ fn event_handler_becomes_on() {
 }
 
 #[test]
+fn event_with_modifiers_becomes_on_opts() {
+    compiles_to(
+        r#"<form @submit.prevent.stop="save()">x</form>"#,
+        quote! {
+            El::new(__backend.clone(), "form")
+                .on_opts(
+                    "submit",
+                    ::vue_rs_dom::EventOptions {
+                        prevent_default: true,
+                        stop_propagation: true,
+                        once: false,
+                    },
+                    move || { save() }
+                )
+                .text("x")
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn event_with_once_modifier_becomes_on_opts() {
+    compiles_to(
+        r#"<button @click.once="go()">x</button>"#,
+        quote! {
+            El::new(__backend.clone(), "button")
+                .on_opts(
+                    "click",
+                    ::vue_rs_dom::EventOptions {
+                        prevent_default: false,
+                        stop_propagation: false,
+                        once: true,
+                    },
+                    move || { go() }
+                )
+                .text("x")
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn event_with_unknown_modifier_errors() {
+    assert!(compile_template(r#"<button @click.bogus="go()">x</button>"#).is_err());
+}
+
+#[test]
 fn bound_attribute_value_keeps_escaped_quotes() {
     // A backslash-escaped quote inside the attribute value embeds the delimiter
     // quote into the Rust expression instead of terminating the value early.

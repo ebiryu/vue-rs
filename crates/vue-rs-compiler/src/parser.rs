@@ -77,7 +77,7 @@ impl Parser {
     fn read_name(&mut self) -> String {
         let mut name = String::new();
         while let Some(c) = self.peek() {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '@') {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '@' | '.') {
                 name.push(c);
                 self.pos += 1;
             } else {

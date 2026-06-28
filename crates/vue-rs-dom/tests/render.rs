@@ -1,7 +1,7 @@
 //! Contract for DOM rendering primitives, exercised against the in-memory
 //! `MockDom` backend so the reactive wiring is testable without a browser.
 
-use vue_rs_dom::{El, MockDom, RawHtml};
+use vue_rs_dom::{El, EventOptions, MockDom, RawHtml};
 use vue_rs_reactive::{create_root, signal};
 
 #[test]
@@ -105,6 +105,72 @@ fn event_listener_is_removed_when_owning_scope_is_disposed() {
     // detach it: further dispatches do nothing.
     dom.dispatch(node, "click");
     assert_eq!(count.get(), 1, "listener should be removed after dispose");
+}
+
+#[test]
+fn on_opts_prevent_default_is_reported_by_dispatch() {
+    let dom = MockDom::new();
+    let count = signal(0);
+    let node = El::new(dom.clone(), "a")
+        .on_opts(
+            "click",
+            EventOptions {
+                prevent_default: true,
+                ..Default::default()
+            },
+            move || count.set(count.get() + 1),
+        )
+        .finish();
+    let outcome = dom.dispatch(node, "click");
+    assert_eq!(count.get(), 1, "handler still runs");
+    assert!(outcome.default_prevented, "prevent_default requested");
+    assert!(!outcome.propagation_stopped);
+}
+
+#[test]
+fn on_opts_stop_propagation_is_reported_by_dispatch() {
+    let dom = MockDom::new();
+    let node = El::new(dom.clone(), "button")
+        .on_opts(
+            "click",
+            EventOptions {
+                stop_propagation: true,
+                ..Default::default()
+            },
+            || {},
+        )
+        .finish();
+    let outcome = dom.dispatch(node, "click");
+    assert!(outcome.propagation_stopped, "stop_propagation requested");
+    assert!(!outcome.default_prevented);
+}
+
+#[test]
+fn on_opts_once_runs_handler_only_once() {
+    let dom = MockDom::new();
+    let count = signal(0);
+    let node = El::new(dom.clone(), "button")
+        .on_opts(
+            "click",
+            EventOptions {
+                once: true,
+                ..Default::default()
+            },
+            move || count.set(count.get() + 1),
+        )
+        .finish();
+    dom.dispatch(node, "click");
+    dom.dispatch(node, "click");
+    assert_eq!(count.get(), 1, "once listener fires a single time");
+}
+
+#[test]
+fn plain_on_reports_no_modifiers() {
+    let dom = MockDom::new();
+    let node = El::new(dom.clone(), "button").on("click", || {}).finish();
+    let outcome = dom.dispatch(node, "click");
+    assert!(!outcome.default_prevented);
+    assert!(!outcome.propagation_stopped);
 }
 
 #[test]

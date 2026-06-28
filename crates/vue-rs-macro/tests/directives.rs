@@ -120,6 +120,32 @@ fn v_for_row_click_fires_handler() {
 }
 
 #[test]
+fn event_modifiers_apply_options_and_run_handler() {
+    let dom = MockDom::new();
+    let saved = signal(0);
+    let node = view!(
+        dom.clone(),
+        r#"<form @submit.prevent="saved.set(saved.get() + 1)">x</form>"#
+    );
+    let outcome = dom.dispatch(node, "submit");
+    assert_eq!(saved.get(), 1, "handler runs");
+    assert!(outcome.default_prevented, ".prevent calls preventDefault");
+}
+
+#[test]
+fn event_once_modifier_fires_a_single_time() {
+    let dom = MockDom::new();
+    let n = signal(0);
+    let node = view!(
+        dom.clone(),
+        r#"<button @click.once="n.set(n.get() + 1)">x</button>"#
+    );
+    dom.dispatch(node, "click");
+    dom.dispatch(node, "click");
+    assert_eq!(n.get(), 1);
+}
+
+#[test]
 fn v_show_toggles_display_style() {
     let dom = MockDom::new();
     let visible = signal(true);

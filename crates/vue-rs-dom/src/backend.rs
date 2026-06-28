@@ -1,5 +1,18 @@
 use std::rc::Rc;
 
+/// Modifiers that change how an event listener behaves (the `@event.prevent` /
+/// `.stop` / `.once` directive modifiers). Applied by the backend when the
+/// event fires; the handler itself is unaware of them.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct EventOptions {
+    /// Call the event's `preventDefault()` before invoking the handler.
+    pub prevent_default: bool,
+    /// Call the event's `stopPropagation()` before invoking the handler.
+    pub stop_propagation: bool,
+    /// Detach the listener after it fires once.
+    pub once: bool,
+}
+
 /// Abstraction over a tree of DOM-like nodes. Implemented by [`crate::MockDom`]
 /// for tests and (with the `web` feature) by `WebDom` over `web-sys`.
 ///
@@ -27,11 +40,13 @@ pub trait Backend: Clone + 'static {
     /// Attach an event listener. The handler receives the event's value (e.g. an
     /// input's text), or an empty string for events that carry no value. Returns
     /// a handle that must be passed to [`Backend::remove_event_listener`] to
-    /// detach the listener and release its resources.
+    /// detach the listener and release its resources. `options` carries any
+    /// event modifiers (prevent/stop/once) the backend should apply.
     fn add_event_listener(
         &self,
         node: &Self::Node,
         event: &str,
+        options: EventOptions,
         handler: Rc<dyn Fn(&str)>,
     ) -> Self::Listener;
     /// Detach a listener previously attached with [`Backend::add_event_listener`].

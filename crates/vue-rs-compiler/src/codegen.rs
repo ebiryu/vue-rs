@@ -477,9 +477,42 @@ fn gen_attr(attr: &Attr, base_style: Option<&TokenStream>) -> Result<TokenStream
         }
         Attr::Event { name, handler } => {
             let handler = parse_expr(handler)?;
-            Ok(quote! { .on(#name, move || { #handler }) })
+            let (event, modifiers) = parse_event_name(name)?;
+            if modifiers.is_empty() {
+                Ok(quote! { .on(#event, move || { #handler }) })
+            } else {
+                let prevent_default = modifiers.contains(&"prevent");
+                let stop_propagation = modifiers.contains(&"stop");
+                let once = modifiers.contains(&"once");
+                Ok(quote! {
+                    .on_opts(
+                        #event,
+                        ::vue_rs_dom::EventOptions {
+                            prevent_default: #prevent_default,
+                            stop_propagation: #stop_propagation,
+                            once: #once,
+                        },
+                        move || { #handler }
+                    )
+                })
+            }
         }
     }
+}
+
+/// Split an `@event` directive name into the event name and its modifiers,
+/// e.g. `submit.prevent.stop` → (`submit`, [`prevent`, `stop`]). Rejects unknown
+/// modifiers so typos surface at compile time.
+fn parse_event_name(name: &str) -> Result<(&str, Vec<&str>), String> {
+    let mut parts = name.split('.');
+    let event = parts.next().unwrap_or("");
+    let modifiers: Vec<&str> = parts.collect();
+    for m in &modifiers {
+        if !matches!(*m, "prevent" | "stop" | "once") {
+            return Err(format!("unknown event modifier `.{m}` on `@{name}`"));
+        }
+    }
+    Ok((event, modifiers))
 }
 
 /// Whether `attr` sets the element's `style` (static `style="…"` or `:style="…"`).

@@ -12,10 +12,10 @@ mod slots;
 #[cfg(feature = "web")]
 mod web;
 
-pub use backend::Backend;
+pub use backend::{Backend, EventOptions};
 pub use callback::Callback;
 pub use element::{switch_views, El, RawHtml};
-pub use mock::MockDom;
+pub use mock::{DispatchOutcome, MockDom};
 pub use slots::SlotFn;
 #[cfg(feature = "web")]
 pub use web::{install_microtask_scheduler, WebDom};

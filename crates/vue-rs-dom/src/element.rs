@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use vue_rs_reactive::{batch, create_root_detached, effect, on_cleanup, RootDisposer};
 
-use crate::backend::Backend;
+use crate::backend::{Backend, EventOptions};
 
 /// A mounted dynamic branch: its root node plus the disposer for its effects.
 type Branch<B> = (<B as Backend>::Node, RootDisposer);
@@ -101,9 +101,22 @@ impl<B: Backend> El<B> {
     /// Attach an event listener that ignores the event value. Writes made by the
     /// handler are batched, so dependent effects run at most once per event.
     pub fn on(self, event: &str, handler: impl Fn() + 'static) -> Self {
+        self.on_opts(event, EventOptions::default(), handler)
+    }
+
+    /// Attach a value-ignoring event listener with explicit modifiers (the
+    /// `@event.prevent` / `.stop` / `.once` directive). Writes made by the
+    /// handler are batched.
+    pub fn on_opts(
+        self,
+        event: &str,
+        options: EventOptions,
+        handler: impl Fn() + 'static,
+    ) -> Self {
         let listener = self.backend.add_event_listener(
             &self.node,
             event,
+            options,
             // `handler` is captured by the listener (Fn), so it can't be moved
             // into `batch`; wrap it in a closure.
             #[allow(clippy::redundant_closure)]
@@ -119,6 +132,7 @@ impl<B: Backend> El<B> {
         let listener = self.backend.add_event_listener(
             &self.node,
             event,
+            EventOptions::default(),
             Rc::new(move |value: &str| batch(|| handler(value))),
         );
         self.cleanup_listener(listener);

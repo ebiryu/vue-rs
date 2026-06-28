@@ -2,12 +2,24 @@ use std::cell::{Cell, RefCell};
 use std::fmt::Write as _;
 use std::rc::Rc;
 
-use crate::backend::Backend;
+use crate::backend::{Backend, EventOptions};
 
 /// An event handler receiving the event's value.
 type Handler = Rc<dyn Fn(&str)>;
-/// A registered listener: a unique id (for removal), its event name, and handler.
-type Listener = (usize, String, Handler);
+/// A registered listener: a unique id (for removal), its event name, modifiers,
+/// and handler.
+type Listener = (usize, String, EventOptions, Handler);
+
+/// What dispatching an event requested via its listeners' modifiers. Returned by
+/// [`MockDom::dispatch`] so tests can assert `.prevent` / `.stop` wiring without a
+/// real event object.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct DispatchOutcome {
+    /// A matched listener was registered with `prevent_default`.
+    pub default_prevented: bool,
+    /// A matched listener was registered with `stop_propagation`.
+    pub propagation_stopped: bool,
+}
 
 enum NodeData {
     Element {
@@ -98,27 +110,42 @@ impl MockDom {
     }
 
     /// Invoke listeners registered for `event` on `node` with no value.
-    pub fn dispatch(&self, node: usize, event: &str) {
-        self.dispatch_value(node, event, "");
+    pub fn dispatch(&self, node: usize, event: &str) -> DispatchOutcome {
+        self.dispatch_value(node, event, "")
     }
 
     /// Invoke listeners registered for `event` on `node`, passing `value`
-    /// (e.g. simulating typing into an input).
-    pub fn dispatch_value(&self, node: usize, event: &str, value: &str) {
-        let handlers: Vec<Handler> = {
+    /// (e.g. simulating typing into an input). Applies `once` (removing the
+    /// listener after it fires) and reports the prevent/stop modifiers of the
+    /// matched listeners.
+    pub fn dispatch_value(&self, node: usize, event: &str, value: &str) -> DispatchOutcome {
+        let matched: Vec<(usize, EventOptions, Handler)> = {
             let nodes = self.nodes.borrow();
             match &nodes[node] {
                 NodeData::Element { listeners, .. } => listeners
                     .iter()
-                    .filter(|(_, name, _)| name == event)
-                    .map(|(_, _, handler)| Rc::clone(handler))
+                    .filter(|(_, name, _, _)| name == event)
+                    .map(|(id, _, opts, handler)| (*id, *opts, Rc::clone(handler)))
                     .collect(),
                 _ => Vec::new(),
             }
         };
-        for handler in handlers {
+        let mut outcome = DispatchOutcome::default();
+        let mut spent: Vec<usize> = Vec::new();
+        for (id, opts, handler) in matched {
+            outcome.default_prevented |= opts.prevent_default;
+            outcome.propagation_stopped |= opts.stop_propagation;
             handler(value);
+            if opts.once {
+                spent.push(id);
+            }
         }
+        if !spent.is_empty()
+            && let NodeData::Element { listeners, .. } = &mut self.nodes.borrow_mut()[node]
+        {
+            listeners.retain(|(id, _, _, _)| !spent.contains(id));
+        }
+        outcome
     }
 }
 
@@ -193,19 +220,20 @@ impl Backend for MockDom {
         &self,
         node: &usize,
         event: &str,
+        options: EventOptions,
         handler: Rc<dyn Fn(&str)>,
     ) -> usize {
         let id = self.next_listener_id.get();
         self.next_listener_id.set(id + 1);
         if let NodeData::Element { listeners, .. } = &mut self.nodes.borrow_mut()[*node] {
-            listeners.push((id, event.to_string(), handler));
+            listeners.push((id, event.to_string(), options, handler));
         }
         id
     }
 
     fn remove_event_listener(&self, node: &usize, listener: usize) {
         if let NodeData::Element { listeners, .. } = &mut self.nodes.borrow_mut()[*node] {
-            listeners.retain(|(id, _, _)| *id != listener);
+            listeners.retain(|(id, _, _, _)| *id != listener);
         }
     }
 }
