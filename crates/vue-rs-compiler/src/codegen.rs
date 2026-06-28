@@ -151,8 +151,12 @@ impl Codegen {
             let part = gen_attr(attr, base_style.as_ref())?;
             chain = quote! { #chain #part };
         }
-        for part in self.children(&el.children)? {
-            chain = quote! { #chain #part };
+        // `v-html` owns the element's content, so any template children are
+        // ignored (matching Vue).
+        if find_static(el, "v-html").is_none() {
+            for part in self.children(&el.children)? {
+                chain = quote! { #chain #part };
+            }
         }
         Ok(quote! { #chain.finish() })
     }
@@ -458,6 +462,13 @@ fn gen_attr(attr: &Attr, base_style: Option<&TokenStream>) -> Result<TokenStream
                     }
                 })
             })
+        }
+        // `v-html` sets the element's inner HTML from a (reactive) expression,
+        // replacing any children. The expression must yield a `RawHtml`, so the
+        // unescaped insertion is an explicit opt-in at the call site.
+        Attr::Static { name, value } if name == "v-html" => {
+            let expr = parse_expr(value)?;
+            Ok(quote! { .dyn_inner_html(move || #expr) })
         }
         Attr::Static { name, value } => Ok(quote! { .attr(#name, #value) }),
         Attr::Dyn { name, expr } => {

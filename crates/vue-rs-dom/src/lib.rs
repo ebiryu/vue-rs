@@ -14,7 +14,7 @@ mod web;
 
 pub use backend::Backend;
 pub use callback::Callback;
-pub use element::{switch_views, El};
+pub use element::{switch_views, El, RawHtml};
 pub use mock::MockDom;
 pub use slots::SlotFn;
 #[cfg(feature = "web")]

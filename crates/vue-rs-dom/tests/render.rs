@@ -1,7 +1,7 @@
 //! Contract for DOM rendering primitives, exercised against the in-memory
 //! `MockDom` backend so the reactive wiring is testable without a browser.
 
-use vue_rs_dom::{El, MockDom};
+use vue_rs_dom::{El, MockDom, RawHtml};
 use vue_rs_reactive::{create_root, signal};
 
 #[test]
@@ -53,6 +53,20 @@ fn dyn_attr_updates_when_signal_changes() {
     assert_eq!(dom.to_html(node), r#"<div class="off"></div>"#);
     active.set(true);
     assert_eq!(dom.to_html(node), r#"<div class="on"></div>"#);
+}
+
+#[test]
+fn dyn_inner_html_sets_raw_markup_and_updates() {
+    let dom = MockDom::new();
+    let html = signal("<b>hi</b>".to_string());
+    let node = El::new(dom.clone(), "div")
+        // Constructing `RawHtml` is the explicit opt-in to unescaped insertion.
+        .dyn_inner_html(move || RawHtml::dangerously_from_html(html.get()))
+        .finish();
+    // Inner HTML is inserted raw (not escaped) and replaces any children.
+    assert_eq!(dom.to_html(node), "<div><b>hi</b></div>");
+    html.set("<i>bye</i>".to_string());
+    assert_eq!(dom.to_html(node), "<div><i>bye</i></div>");
 }
 
 #[test]

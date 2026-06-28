@@ -10,6 +10,30 @@ use crate::backend::Backend;
 /// A mounted dynamic branch: its root node plus the disposer for its effects.
 type Branch<B> = (<B as Backend>::Node, RootDisposer);
 
+/// Trusted raw HTML markup for the `v-html` directive.
+///
+/// The wrapped markup is inserted into the DOM **verbatim, with no escaping**.
+/// Constructing a `RawHtml` is the explicit assertion that the markup is safe to
+/// render. Building one from untrusted input (user text, network responses,
+/// URL parameters) is a cross-site-scripting (XSS) vector — sanitize first. The
+/// constructor is named loudly for the same reason React spells this
+/// `dangerouslySetInnerHTML`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RawHtml(String);
+
+impl RawHtml {
+    /// Wrap markup you trust to be safe. The content bypasses all escaping; see
+    /// the [`RawHtml`] type docs for the XSS caveat.
+    pub fn dangerously_from_html(html: impl Into<String>) -> Self {
+        RawHtml(html.into())
+    }
+
+    /// The wrapped markup.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Builder for an element node. Reactive bindings (`dyn_text` / `dyn_attr`) and
 /// control flow (`dyn_if` / `dyn_for`) install effects so the tree updates when
 /// the reactive values they read change.
@@ -37,6 +61,17 @@ impl<B: Backend> El<B> {
         let node = self.node.clone();
         let name = name.to_string();
         effect(move || backend.set_attribute(&node, &name, &f()));
+        self
+    }
+
+    /// Set the element's inner HTML from a [`RawHtml`] value that re-evaluates
+    /// whenever its reactive deps change (the `v-html` directive). The markup is
+    /// inserted unescaped and replaces any children; requiring `RawHtml` keeps
+    /// that opt-in visible at the call site.
+    pub fn dyn_inner_html(self, f: impl Fn() -> RawHtml + 'static) -> Self {
+        let backend = self.backend.clone();
+        let node = self.node.clone();
+        effect(move || backend.set_inner_html(&node, f().as_str()));
         self
     }
 

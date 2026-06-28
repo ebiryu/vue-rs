@@ -1,7 +1,7 @@
 //! End-to-end: `v-if` / `v-else` / `v-for` / `v-model` compile through `view!`
 //! and stay reactive on `MockDom`.
 
-use vue_rs_dom::{El, MockDom};
+use vue_rs_dom::{El, MockDom, RawHtml};
 use vue_rs_macro::view;
 use vue_rs_reactive::signal;
 
@@ -198,4 +198,21 @@ fn v_model_two_way_binding() {
     dom.dispatch_value(node, "input", "world");
     assert_eq!(dom.to_html(node), r#"<input value="world"></input>"#);
     assert_eq!(text.get(), "world");
+}
+
+#[test]
+fn v_html_renders_raw_markup_reactively() {
+    let dom = MockDom::new();
+    let body = signal(String::from("<b>bold</b>"));
+
+    // `v-html` requires the expression to yield `RawHtml`, so the danger is
+    // visible at the call site (akin to React's `dangerouslySetInnerHTML`).
+    let node = view!(
+        dom.clone(),
+        r#"<div v-html="RawHtml::dangerously_from_html(body.get())"></div>"#
+    );
+
+    assert_eq!(dom.to_html(node), "<div><b>bold</b></div>");
+    body.set(String::from("<i>italic</i>"));
+    assert_eq!(dom.to_html(node), "<div><i>italic</i></div>");
 }

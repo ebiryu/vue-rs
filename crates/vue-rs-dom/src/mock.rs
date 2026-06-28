@@ -15,6 +15,9 @@ enum NodeData {
         attrs: Vec<(String, String)>,
         children: Vec<usize>,
         listeners: Vec<Listener>,
+        /// Raw markup set via `set_inner_html` (the `v-html` directive). When
+        /// present it is serialized verbatim in place of `children`.
+        inner_html: Option<String>,
     },
     Text {
         data: String,
@@ -65,6 +68,7 @@ impl MockDom {
                 tag,
                 attrs,
                 children,
+                inner_html,
                 ..
             } => {
                 let mut out = format!("<{tag}");
@@ -72,9 +76,14 @@ impl MockDom {
                     let _ = write!(out, r#" {name}="{}""#, escape_attribute(value));
                 }
                 out.push('>');
-                // Shared borrow is re-entrant across the recursion (no mut borrow).
-                for child in children {
-                    out.push_str(&self.to_html(*child));
+                if let Some(html) = inner_html {
+                    // `v-html` content is inserted raw and replaces any children.
+                    out.push_str(html);
+                } else {
+                    // Shared borrow is re-entrant across the recursion (no mut borrow).
+                    for child in children {
+                        out.push_str(&self.to_html(*child));
+                    }
                 }
                 let _ = write!(out, "</{tag}>");
                 out
@@ -123,6 +132,7 @@ impl Backend for MockDom {
             attrs: Vec::new(),
             children: Vec::new(),
             listeners: Vec::new(),
+            inner_html: None,
         })
     }
 
@@ -149,6 +159,12 @@ impl Backend for MockDom {
             } else {
                 attrs.push((name.to_string(), value.to_string()));
             }
+        }
+    }
+
+    fn set_inner_html(&self, node: &usize, html: &str) {
+        if let NodeData::Element { inner_html, .. } = &mut self.nodes.borrow_mut()[*node] {
+            *inner_html = Some(html.to_string());
         }
     }
 

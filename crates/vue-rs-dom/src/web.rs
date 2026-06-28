@@ -98,6 +98,11 @@ impl Backend for WebDom {
         element.set_attribute(name, value).expect("set_attribute");
     }
 
+    fn set_inner_html(&self, node: &web_sys::Node, html: &str) {
+        let element: &web_sys::Element = node.unchecked_ref();
+        element.set_inner_html(html);
+    }
+
     fn append_child(&self, parent: &web_sys::Node, child: &web_sys::Node) {
         parent.append_child(child).expect("append_child");
     }
