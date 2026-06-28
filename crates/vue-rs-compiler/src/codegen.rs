@@ -378,6 +378,18 @@ fn gen_attr(attr: &Attr) -> Result<TokenStream, String> {
                 .on_value("input", move |__value| (#model).set(__value.to_string()))
             })
         }
+        // `v-show` keeps the element mounted (unlike `v-if`) and reactively
+        // collapses it with inline `display: none` when the expression is falsy.
+        Attr::Static { name, value } if name == "v-show" => {
+            let cond = parse_expr(value)?;
+            Ok(quote! {
+                .dyn_attr("style", move || if (#cond) {
+                    ::std::string::String::new()
+                } else {
+                    "display: none".to_string()
+                })
+            })
+        }
         Attr::Static { name, value } => Ok(quote! { .attr(#name, #value) }),
         Attr::Dyn { name, expr } => {
             let expr = parse_expr(expr)?;

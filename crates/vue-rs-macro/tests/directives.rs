@@ -84,6 +84,22 @@ fn v_for_row_click_fires_handler() {
 }
 
 #[test]
+fn v_show_toggles_display_style() {
+    let dom = MockDom::new();
+    let visible = signal(true);
+
+    let node = view!(dom.clone(), r#"<p v-show="visible.get()">hi</p>"#);
+
+    // Shown: no `display: none`. Hidden: the element stays mounted but is
+    // collapsed via inline `display: none` (unlike `v-if`, which unmounts).
+    assert_eq!(dom.to_html(node), r#"<p style="">hi</p>"#);
+    visible.set(false);
+    assert_eq!(dom.to_html(node), r#"<p style="display: none">hi</p>"#);
+    visible.set(true);
+    assert_eq!(dom.to_html(node), r#"<p style="">hi</p>"#);
+}
+
+#[test]
 fn v_model_two_way_binding() {
     let dom = MockDom::new();
     let text = signal(String::from("hi"));
