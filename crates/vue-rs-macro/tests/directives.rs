@@ -54,6 +54,22 @@ fn v_for_keyed_list() {
 }
 
 #[test]
+fn v_for_with_index_binding() {
+    let dom = MockDom::new();
+    let items = signal(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+
+    let node = view!(
+        dom.clone(),
+        r#"<ul><li v-for="(item, i) in items.get()" :key="item">{{ format!("{}:{}", i, item) }}</li></ul>"#
+    );
+
+    assert_eq!(
+        dom.to_html(node),
+        "<ul><li>0:a</li><li>1:b</li><li>2:c</li></ul>"
+    );
+}
+
+#[test]
 fn v_for_row_click_fires_handler() {
     let dom = MockDom::new();
     let items = signal(vec![10, 20]);

@@ -303,14 +303,29 @@ impl Codegen {
         let (binding, iterable) = for_expr
             .split_once(" in ")
             .ok_or_else(|| format!("v-for must be `item in items`, got `{for_expr}`"))?;
-        let binding: TokenStream = binding
-            .trim()
-            .parse()
-            .map_err(|e| format!("invalid v-for binding: {e}"))?;
+        let binding = binding.trim();
         let iterable = parse_expr(iterable.trim())?;
         let key = find_dyn(el, "key").ok_or("v-for requires a :key binding")?;
         let key = parse_expr(key)?;
         let view = self.element(el)?;
+
+        // `(item, index)` binds the position alongside the item. We enumerate the
+        // iterable into `(usize, T)` rows and destructure with the index first to
+        // match `enumerate`'s order. The index is captured at build time, so a
+        // reused row keeps its original index when the list is reordered.
+        if let Some((item_pat, index_pat)) = parse_index_binding(binding)? {
+            return Ok(quote! {
+                .dyn_for(
+                    move || (#iterable).into_iter().enumerate().collect::<::std::vec::Vec<_>>(),
+                    |(#index_pat, #item_pat)| (#key).clone(),
+                    move |__backend, (#index_pat, #item_pat)| #view,
+                )
+            });
+        }
+
+        let binding: TokenStream = binding
+            .parse()
+            .map_err(|e| format!("invalid v-for binding: {e}"))?;
         Ok(quote! {
             .dyn_for(
                 move || (#iterable),
@@ -319,6 +334,26 @@ impl Codegen {
             )
         })
     }
+}
+
+/// Parse a `v-for` binding's `(item, index)` tuple form, returning the item and
+/// index patterns. Returns `Ok(None)` for the single-identifier form `item`.
+fn parse_index_binding(binding: &str) -> Result<Option<(TokenStream, TokenStream)>, String> {
+    let Some(inner) = binding.strip_prefix('(').and_then(|s| s.strip_suffix(')')) else {
+        return Ok(None);
+    };
+    let (item, index) = inner
+        .split_once(',')
+        .ok_or_else(|| format!("v-for tuple binding must be `(item, index)`, got `{binding}`"))?;
+    let item: TokenStream = item
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid v-for item binding: {e}"))?;
+    let index: TokenStream = index
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid v-for index binding: {e}"))?;
+    Ok(Some((item, index)))
 }
 
 fn is_component(tag: &str) -> bool {
