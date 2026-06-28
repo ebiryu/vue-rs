@@ -110,6 +110,7 @@ impl<B: Backend> El<B> {
         let backend = self.backend.clone();
         let parent = self.node.clone();
         let mounted: Rc<RefCell<Option<Branch<B>>>> = Rc::new(RefCell::new(None));
+        dispose_branches_on_cleanup::<B>(mounted.clone());
         let shown = Cell::new(false);
         effect(move || {
             let show = cond();
@@ -141,6 +142,7 @@ impl<B: Backend> El<B> {
         let backend = self.backend.clone();
         let parent = self.node.clone();
         let mounted: Rc<RefCell<Option<Branch<B>>>> = Rc::new(RefCell::new(None));
+        dispose_branches_on_cleanup::<B>(mounted.clone());
         let current = Cell::new(None::<bool>);
         effect(move || {
             let show = cond();
@@ -179,6 +181,15 @@ impl<B: Backend> El<B> {
         let parent = self.node.clone();
         let rows: Rc<RefCell<HashMap<K, Branch<B>>>> =
             Rc::new(RefCell::new(HashMap::new()));
+        // Rows are built in detached roots so they survive the list effect's
+        // re-runs; register a cleanup so the enclosing scope's disposal tears down
+        // any rows still mounted at that point.
+        let rows_for_cleanup = rows.clone();
+        on_cleanup(move || {
+            for (_key, (_node, disposer)) in rows_for_cleanup.borrow_mut().drain() {
+                disposer.dispose();
+            }
+        });
         effect(move || {
             let next = items();
             let mut old = rows.borrow_mut();
@@ -214,6 +225,18 @@ impl<B: Backend> El<B> {
     pub fn finish(self) -> B::Node {
         self.node
     }
+}
+
+/// Register a cleanup so the enclosing reactive scope's disposal tears down a
+/// branch that is still mounted. The branch lives in a detached root (so it
+/// survives the control-flow effect's re-runs), which means it is otherwise
+/// unowned and would leak when the scope around it goes away.
+fn dispose_branches_on_cleanup<B: Backend>(mounted: Rc<RefCell<Option<Branch<B>>>>) {
+    on_cleanup(move || {
+        if let Some((_node, disposer)) = mounted.borrow_mut().take() {
+            disposer.dispose();
+        }
+    });
 }
 
 /// Build a view inside a detached reactive scope so it survives re-runs of the

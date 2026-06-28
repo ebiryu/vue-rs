@@ -1,10 +1,10 @@
 //! Contract for control-flow and value-event primitives against `MockDom`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use vue_rs_dom::{El, MockDom};
-use vue_rs_reactive::{effect, signal};
+use vue_rs_reactive::{create_root, effect, signal};
 
 #[test]
 fn dyn_if_mounts_and_unmounts() {
@@ -41,6 +41,116 @@ fn dyn_if_else_swaps_branches() {
     assert_eq!(dom.to_html(root), "<div><span>no</span></div>");
     toggle.set(true);
     assert_eq!(dom.to_html(root), "<div><p>yes</p></div>");
+}
+
+#[test]
+fn dyn_if_branch_is_disposed_with_owning_scope() {
+    let dom = MockDom::new();
+    let tick = signal(0);
+    let runs = Rc::new(Cell::new(0));
+    let r = runs.clone();
+    let disposer = create_root(|| {
+        El::new(dom.clone(), "div")
+            .dyn_if(
+                || true,
+                move |b| {
+                    let r = r.clone();
+                    El::new(b, "p")
+                        .dyn_text(move || {
+                            r.set(r.get() + 1);
+                            tick.get().to_string()
+                        })
+                        .finish()
+                },
+            )
+            .finish();
+    });
+
+    assert_eq!(runs.get(), 1, "branch effect runs once on mount");
+    tick.set(1);
+    assert_eq!(runs.get(), 2, "mounted branch effect reacts");
+
+    disposer.dispose();
+    tick.set(2);
+    assert_eq!(
+        runs.get(),
+        2,
+        "branch effect must be disposed with the owning scope"
+    );
+}
+
+#[test]
+fn dyn_if_else_branch_is_disposed_with_owning_scope() {
+    let dom = MockDom::new();
+    let tick = signal(0);
+    let runs = Rc::new(Cell::new(0));
+    let r = runs.clone();
+    let disposer = create_root(|| {
+        El::new(dom.clone(), "div")
+            .dyn_if_else(
+                || true,
+                move |b| {
+                    let r = r.clone();
+                    El::new(b, "p")
+                        .dyn_text(move || {
+                            r.set(r.get() + 1);
+                            tick.get().to_string()
+                        })
+                        .finish()
+                },
+                move |b| El::new(b, "span").text("no").finish(),
+            )
+            .finish();
+    });
+
+    assert_eq!(runs.get(), 1);
+    tick.set(1);
+    assert_eq!(runs.get(), 2);
+
+    disposer.dispose();
+    tick.set(2);
+    assert_eq!(
+        runs.get(),
+        2,
+        "active branch effect must be disposed with the owning scope"
+    );
+}
+
+#[test]
+fn dyn_for_rows_are_disposed_with_owning_scope() {
+    let dom = MockDom::new();
+    let tick = signal(0);
+    let runs = Rc::new(Cell::new(0));
+    let r = runs.clone();
+    let disposer = create_root(|| {
+        El::new(dom.clone(), "ul")
+            .dyn_for(
+                move || vec![1],
+                |n| *n,
+                move |b, _n| {
+                    let r = r.clone();
+                    El::new(b, "li")
+                        .dyn_text(move || {
+                            r.set(r.get() + 1);
+                            tick.get().to_string()
+                        })
+                        .finish()
+                },
+            )
+            .finish();
+    });
+
+    assert_eq!(runs.get(), 1);
+    tick.set(1);
+    assert_eq!(runs.get(), 2);
+
+    disposer.dispose();
+    tick.set(2);
+    assert_eq!(
+        runs.get(),
+        2,
+        "row effects must be disposed with the owning scope"
+    );
 }
 
 #[test]
