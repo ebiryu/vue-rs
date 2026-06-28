@@ -143,7 +143,7 @@ impl Codegen {
         };
         for attr in &el.attrs {
             if is_structural(attr) {
-                continue; // v-if / v-else / v-for / :key are handled by the parent
+                continue; // v-if / v-else-if / v-else / v-for / :key are handled by the parent
             }
             if base_style.is_some() && is_style_attr(attr) {
                 continue; // folded into the `v-show` toggle below
@@ -279,14 +279,29 @@ impl Codegen {
                     if let Some(for_expr) = find_static(el, "v-for") {
                         parts.push(self.gen_for(el, for_expr)?);
                     } else if let Some(cond) = find_static(el, "v-if") {
-                        if let Some(Node::Element(next)) = children.get(i + 1)
-                            && find_static(next, "v-else").is_some()
-                        {
-                            parts.push(self.gen_if_else(el, next, cond)?);
-                            i += 2;
-                            continue;
+                        // Collect the `v-if` / `v-else-if`* / `v-else`? chain: each
+                        // arm is a `(condition, element)`, with `None` condition for
+                        // the terminal `v-else`. Whitespace-only text between arms is
+                        // dropped by the parser, so siblings are directly adjacent.
+                        let mut arms: Vec<(Option<&str>, &Element)> = vec![(Some(cond), el)];
+                        let mut j = i + 1;
+                        while let Some(Node::Element(next)) = children.get(j) {
+                            if let Some(cond) = find_static(next, "v-else-if") {
+                                arms.push((Some(cond), next));
+                                j += 1;
+                            } else if find_static(next, "v-else").is_some() {
+                                arms.push((None, next));
+                                j += 1;
+                                break;
+                            } else {
+                                break;
+                            }
                         }
-                        parts.push(self.gen_if(el, cond)?);
+                        parts.push(self.gen_if_chain(&arms)?);
+                        i = j;
+                        continue;
+                    } else if find_static(el, "v-else-if").is_some() {
+                        return Err("v-else-if without a matching v-if".to_string());
                     } else if find_static(el, "v-else").is_some() {
                         return Err("v-else without a matching v-if".to_string());
                     } else {
@@ -300,23 +315,43 @@ impl Codegen {
         Ok(parts)
     }
 
-    fn gen_if(&self, el: &Element, cond: &str) -> Result<TokenStream, String> {
-        let cond = parse_expr(cond)?;
-        let view = self.element(el)?;
-        Ok(quote! { .dyn_if(move || (#cond), move |__backend| #view) })
-    }
-
-    fn gen_if_else(
-        &self,
-        then_el: &Element,
-        else_el: &Element,
-        cond: &str,
-    ) -> Result<TokenStream, String> {
-        let cond = parse_expr(cond)?;
-        let then_view = self.element(then_el)?;
-        let else_view = self.element(else_el)?;
+    /// Lower a `v-if` / `v-else-if`* / `v-else`? chain (`arms` as
+    /// `(condition, element)`, with `None` condition for the terminal `v-else`)
+    /// to a `dyn_switch`. The selector returns the index of the first arm whose
+    /// condition holds — the `v-else` arm always holds — or `None` when none do.
+    fn gen_if_chain(&self, arms: &[(Option<&str>, &Element)]) -> Result<TokenStream, String> {
+        let mut selector_arms = Vec::new();
+        let mut pushes = Vec::new();
+        // The terminal `v-else` arm (a `None` condition) always matches, so it
+        // becomes the selector's tail expression. Without one, the tail is `None`.
+        let mut tail = quote! { ::core::option::Option::None };
+        for (i, (cond, el)) in arms.iter().enumerate() {
+            let view = self.element(el)?;
+            pushes.push(quote! {
+                __views.push(::std::boxed::Box::new(move |__backend| #view));
+            });
+            match cond {
+                Some(cond) => {
+                    let cond = parse_expr(cond)?;
+                    selector_arms.push(quote! {
+                        if (#cond) { return ::core::option::Option::Some(#i); }
+                    });
+                }
+                None => tail = quote! { ::core::option::Option::Some(#i) },
+            }
+        }
         Ok(quote! {
-            .dyn_if_else(move || (#cond), move |__backend| #then_view, move |__backend| #else_view)
+            .dyn_switch(
+                move || {
+                    #(#selector_arms)*
+                    #tail
+                },
+                {
+                    let mut __views = ::vue_rs_dom::switch_views(&__backend);
+                    #(#pushes)*
+                    __views
+                },
+            )
         })
     }
 
@@ -446,7 +481,9 @@ fn is_style_attr(attr: &Attr) -> bool {
 
 fn is_structural(attr: &Attr) -> bool {
     match attr {
-        Attr::Static { name, .. } => matches!(name.as_str(), "v-if" | "v-else" | "v-for"),
+        Attr::Static { name, .. } => {
+            matches!(name.as_str(), "v-if" | "v-else-if" | "v-else" | "v-for")
+        }
         Attr::Dyn { name, .. } => name == "key",
         Attr::Event { .. } => false,
     }

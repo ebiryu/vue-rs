@@ -38,6 +38,42 @@ fn v_if_v_else_swaps() {
 }
 
 #[test]
+fn v_if_else_if_else_chain() {
+    let dom = MockDom::new();
+    let n = signal(0);
+
+    let node = view!(
+        dom.clone(),
+        r#"<div><p v-if="n.get() == 0">zero</p><p v-else-if="n.get() == 1">one</p><span v-else>many</span></div>"#
+    );
+
+    assert_eq!(dom.to_html(node), "<div><p>zero</p></div>");
+    n.set(1);
+    assert_eq!(dom.to_html(node), "<div><p>one</p></div>");
+    n.set(5);
+    assert_eq!(dom.to_html(node), "<div><span>many</span></div>");
+    n.set(0);
+    assert_eq!(dom.to_html(node), "<div><p>zero</p></div>");
+}
+
+#[test]
+fn v_if_else_if_without_trailing_else() {
+    let dom = MockDom::new();
+    let n = signal(0);
+
+    let node = view!(
+        dom.clone(),
+        r#"<div><p v-if="n.get() == 0">zero</p><p v-else-if="n.get() == 1">one</p></div>"#
+    );
+
+    assert_eq!(dom.to_html(node), "<div><p>zero</p></div>");
+    n.set(1);
+    assert_eq!(dom.to_html(node), "<div><p>one</p></div>");
+    n.set(2);
+    assert_eq!(dom.to_html(node), "<div></div>");
+}
+
+#[test]
 fn v_for_keyed_list() {
     let dom = MockDom::new();
     let items = signal(vec![1, 2, 3]);

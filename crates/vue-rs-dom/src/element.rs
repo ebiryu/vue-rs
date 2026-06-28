@@ -165,6 +165,39 @@ impl<B: Backend> El<B> {
         self
     }
 
+    /// Mount whichever branch `selector` picks, by index into `views`, or nothing
+    /// when it returns `None` (the `v-if` / `v-else-if` / `v-else` chain). Swaps
+    /// the mounted branch when the selected index changes.
+    pub fn dyn_switch<F>(self, selector: F, views: Vec<Box<dyn Fn(B) -> B::Node>>) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        let anchor = self.backend.create_anchor();
+        self.backend.append_child(&self.node, &anchor);
+        let backend = self.backend.clone();
+        let parent = self.node.clone();
+        let mounted: Rc<RefCell<Option<Branch<B>>>> = Rc::new(RefCell::new(None));
+        dispose_branches_on_cleanup::<B>(mounted.clone());
+        let current = Cell::new(None::<Option<usize>>);
+        effect(move || {
+            let which = selector();
+            if current.get() == Some(which) {
+                return;
+            }
+            current.set(Some(which));
+            if let Some((node, disposer)) = mounted.borrow_mut().take() {
+                backend.remove_child(&parent, &node);
+                disposer.dispose();
+            }
+            if let Some(i) = which {
+                let (node, disposer) = build_branch(&backend, &*views[i]);
+                backend.insert_before(&parent, &node, &anchor);
+                *mounted.borrow_mut() = Some((node, disposer));
+            }
+        });
+        self
+    }
+
     /// Render a keyed list. Rows are reused across updates by their key; rows are
     /// created, removed, and reordered to match `items`.
     pub fn dyn_for<T, K, IT, KF, V>(self, items: IT, key: KF, view: V) -> Self
@@ -225,6 +258,13 @@ impl<B: Backend> El<B> {
     pub fn finish(self) -> B::Node {
         self.node
     }
+}
+
+/// Build an empty `dyn_switch` branch-view vec whose backend type is pinned from
+/// `sample`. Passing the in-scope backend lets each pushed view closure infer its
+/// parameter type, so generated code needs no parameter annotation.
+pub fn switch_views<B: Backend>(_sample: &B) -> Vec<Box<dyn Fn(B) -> B::Node>> {
+    Vec::new()
 }
 
 /// Register a cleanup so the enclosing reactive scope's disposal tears down a

@@ -44,6 +44,86 @@ fn dyn_if_else_swaps_branches() {
 }
 
 #[test]
+fn dyn_switch_selects_active_branch() {
+    let dom = MockDom::new();
+    let n = signal(0);
+    let views: Vec<Box<dyn Fn(MockDom) -> usize>> = vec![
+        Box::new(|b| El::new(b, "p").text("zero").finish()),
+        Box::new(|b| El::new(b, "p").text("one").finish()),
+        Box::new(|b| El::new(b, "p").text("many").finish()),
+    ];
+    let root = El::new(dom.clone(), "div")
+        .dyn_switch(
+            move || match n.get() {
+                0 => Some(0),
+                1 => Some(1),
+                _ => Some(2),
+            },
+            views,
+        )
+        .finish();
+
+    assert_eq!(dom.to_html(root), "<div><p>zero</p></div>");
+    n.set(1);
+    assert_eq!(dom.to_html(root), "<div><p>one</p></div>");
+    n.set(5);
+    assert_eq!(dom.to_html(root), "<div><p>many</p></div>");
+    n.set(0);
+    assert_eq!(dom.to_html(root), "<div><p>zero</p></div>");
+}
+
+#[test]
+fn dyn_switch_mounts_nothing_when_no_branch_matches() {
+    let dom = MockDom::new();
+    let show = signal(false);
+    let views: Vec<Box<dyn Fn(MockDom) -> usize>> =
+        vec![Box::new(|b| El::new(b, "p").text("hi").finish())];
+    let root = El::new(dom.clone(), "div")
+        .dyn_switch(move || if show.get() { Some(0) } else { None }, views)
+        .finish();
+
+    assert_eq!(dom.to_html(root), "<div></div>");
+    show.set(true);
+    assert_eq!(dom.to_html(root), "<div><p>hi</p></div>");
+    show.set(false);
+    assert_eq!(dom.to_html(root), "<div></div>");
+}
+
+#[test]
+fn dyn_switch_branch_is_disposed_with_owning_scope() {
+    let dom = MockDom::new();
+    let tick = signal(0);
+    let runs = Rc::new(Cell::new(0));
+    let r = runs.clone();
+    let disposer = create_root(|| {
+        let views: Vec<Box<dyn Fn(MockDom) -> usize>> = vec![Box::new(move |b| {
+            let r = r.clone();
+            El::new(b, "p")
+                .dyn_text(move || {
+                    r.set(r.get() + 1);
+                    tick.get().to_string()
+                })
+                .finish()
+        })];
+        El::new(dom.clone(), "div")
+            .dyn_switch(|| Some(0), views)
+            .finish();
+    });
+
+    assert_eq!(runs.get(), 1);
+    tick.set(1);
+    assert_eq!(runs.get(), 2);
+
+    disposer.dispose();
+    tick.set(2);
+    assert_eq!(
+        runs.get(),
+        2,
+        "active branch effect must be disposed with the owning scope"
+    );
+}
+
+#[test]
 fn dyn_if_branch_is_disposed_with_owning_scope() {
     let dom = MockDom::new();
     let tick = signal(0);
