@@ -123,11 +123,32 @@ impl Codegen {
             let marker = format!("data-v-{scope}");
             chain = quote! { #chain.attr(#marker, "") };
         }
+        // When `v-show` shares an element with the element's own `style` (static
+        // `style="…"` or dynamic `:style="…"`), `v-show` folds the `display: none`
+        // toggle into that base style instead of emitting its own `style`
+        // attribute (which would clobber the other one). `base_style` is the
+        // expression that yields the base style `String`; the folded `style` attr
+        // is then skipped below since it is already woven in.
+        let base_style: Option<TokenStream> = if find_static(el, "v-show").is_some() {
+            Some(if let Some(value) = find_static(el, "style") {
+                quote! { #value.to_string() }
+            } else if let Some(expr) = find_dyn(el, "style") {
+                let expr = parse_expr(expr)?;
+                quote! { (#expr).to_string() }
+            } else {
+                quote! { ::std::string::String::new() }
+            })
+        } else {
+            None
+        };
         for attr in &el.attrs {
             if is_structural(attr) {
                 continue; // v-if / v-else / v-for / :key are handled by the parent
             }
-            let part = gen_attr(attr)?;
+            if base_style.is_some() && is_style_attr(attr) {
+                continue; // folded into the `v-show` toggle below
+            }
+            let part = gen_attr(attr, base_style.as_ref())?;
             chain = quote! { #chain #part };
         }
         for part in self.children(&el.children)? {
@@ -369,7 +390,7 @@ fn slot_directive(el: &Element) -> Option<(&str, &str)> {
     })
 }
 
-fn gen_attr(attr: &Attr) -> Result<TokenStream, String> {
+fn gen_attr(attr: &Attr, base_style: Option<&TokenStream>) -> Result<TokenStream, String> {
     match attr {
         Attr::Static { name, value } if name == "v-model" => {
             let model = parse_expr(value)?;
@@ -380,13 +401,26 @@ fn gen_attr(attr: &Attr) -> Result<TokenStream, String> {
         }
         // `v-show` keeps the element mounted (unlike `v-if`) and reactively
         // collapses it with inline `display: none` when the expression is falsy.
+        // The element's own `style` (static or `:style`, captured as `base_style`)
+        // is preserved: the toggle appends `display: none` to it rather than
+        // replacing it. The base is re-evaluated inside the effect, so a reactive
+        // `:style` stays live.
         Attr::Static { name, value } if name == "v-show" => {
             let cond = parse_expr(value)?;
+            let base = match base_style {
+                Some(base) => quote! { #base },
+                None => quote! { ::std::string::String::new() },
+            };
             Ok(quote! {
-                .dyn_attr("style", move || if (#cond) {
-                    ::std::string::String::new()
-                } else {
-                    "display: none".to_string()
+                .dyn_attr("style", move || {
+                    let __base: ::std::string::String = #base;
+                    if (#cond) {
+                        __base
+                    } else if __base.is_empty() {
+                        "display: none".to_string()
+                    } else {
+                        ::std::format!("{}; display: none", __base)
+                    }
                 })
             })
         }
@@ -399,6 +433,14 @@ fn gen_attr(attr: &Attr) -> Result<TokenStream, String> {
             let handler = parse_expr(handler)?;
             Ok(quote! { .on(#name, move || { #handler }) })
         }
+    }
+}
+
+/// Whether `attr` sets the element's `style` (static `style="…"` or `:style="…"`).
+fn is_style_attr(attr: &Attr) -> bool {
+    match attr {
+        Attr::Static { name, .. } | Attr::Dyn { name, .. } => name == "style",
+        Attr::Event { .. } => false,
     }
 }
 

@@ -100,6 +100,56 @@ fn v_show_toggles_display_style() {
 }
 
 #[test]
+fn v_show_merges_with_static_style() {
+    let dom = MockDom::new();
+    let visible = signal(true);
+
+    let node = view!(
+        dom.clone(),
+        r#"<p v-show="visible.get()" style="color: red">hi</p>"#
+    );
+
+    // The element's own `style` is preserved; `v-show` only appends/removes the
+    // `display: none` declaration, instead of clobbering the whole attribute.
+    assert_eq!(dom.to_html(node), r#"<p style="color: red">hi</p>"#);
+    visible.set(false);
+    assert_eq!(
+        dom.to_html(node),
+        r#"<p style="color: red; display: none">hi</p>"#
+    );
+    visible.set(true);
+    assert_eq!(dom.to_html(node), r#"<p style="color: red">hi</p>"#);
+}
+
+#[test]
+fn v_show_merges_with_dynamic_style() {
+    let dom = MockDom::new();
+    let visible = signal(true);
+    let color = signal(String::from("color: red"));
+
+    let node = view!(
+        dom.clone(),
+        r#"<p v-show="visible.get()" :style="color.get()">hi</p>"#
+    );
+
+    // The `:style` value is preserved and stays reactive; `v-show` only
+    // appends/removes `display: none` on top of it, within a single effect.
+    assert_eq!(dom.to_html(node), r#"<p style="color: red">hi</p>"#);
+    visible.set(false);
+    assert_eq!(
+        dom.to_html(node),
+        r#"<p style="color: red; display: none">hi</p>"#
+    );
+    color.set(String::from("color: blue"));
+    assert_eq!(
+        dom.to_html(node),
+        r#"<p style="color: blue; display: none">hi</p>"#
+    );
+    visible.set(true);
+    assert_eq!(dom.to_html(node), r#"<p style="color: blue">hi</p>"#);
+}
+
+#[test]
 fn v_model_two_way_binding() {
     let dom = MockDom::new();
     let text = signal(String::from("hi"));
