@@ -52,6 +52,34 @@ fn mixed_static_text_and_interpolation() {
 }
 
 #[test]
+fn v_text_becomes_dyn_text() {
+    // `v-text` is sugar for a single `{{ }}` child: it sets the element's text
+    // content from a reactive expression.
+    compiles_to(
+        r#"<span v-text="msg.get()"></span>"#,
+        quote! {
+            El::new(__backend.clone(), "span")
+                .dyn_text(move || (msg.get()).to_string())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_text_ignores_template_children() {
+    // Like Vue, `v-text` owns the element's content, so template children are
+    // dropped.
+    compiles_to(
+        r#"<span v-text="msg.get()">ignored</span>"#,
+        quote! {
+            El::new(__backend.clone(), "span")
+                .dyn_text(move || (msg.get()).to_string())
+                .finish()
+        },
+    );
+}
+
+#[test]
 fn bound_attribute_becomes_dyn_attr() {
     compiles_to(
         r#"<div :class="cls()"></div>"#,

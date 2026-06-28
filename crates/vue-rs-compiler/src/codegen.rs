@@ -151,9 +151,9 @@ impl Codegen {
             let part = gen_attr(attr, base_style.as_ref())?;
             chain = quote! { #chain #part };
         }
-        // `v-html` owns the element's content, so any template children are
-        // ignored (matching Vue).
-        if find_static(el, "v-html").is_none() {
+        // `v-html` and `v-text` own the element's content, so any template
+        // children are ignored (matching Vue).
+        if find_static(el, "v-html").is_none() && find_static(el, "v-text").is_none() {
             for part in self.children(&el.children)? {
                 chain = quote! { #chain #part };
             }
@@ -469,6 +469,13 @@ fn gen_attr(attr: &Attr, base_style: Option<&TokenStream>) -> Result<TokenStream
         Attr::Static { name, value } if name == "v-html" => {
             let expr = parse_expr(value)?;
             Ok(quote! { .dyn_inner_html(move || #expr) })
+        }
+        // `v-text` is sugar for a single `{{ }}` child: it sets the element's
+        // text content (escaped) from a reactive expression, replacing any
+        // template children.
+        Attr::Static { name, value } if name == "v-text" => {
+            let expr = parse_expr(value)?;
+            Ok(quote! { .dyn_text(move || (#expr).to_string()) })
         }
         Attr::Static { name, value } => Ok(quote! { .attr(#name, #value) }),
         Attr::Dyn { name, expr } => {

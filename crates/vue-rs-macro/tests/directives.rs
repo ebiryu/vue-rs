@@ -353,3 +353,20 @@ fn v_html_renders_raw_markup_reactively() {
     body.set(String::from("<i>italic</i>"));
     assert_eq!(dom.to_html(node), "<div><i>italic</i></div>");
 }
+
+#[test]
+fn v_text_renders_text_content_reactively() {
+    let dom = MockDom::new();
+    let msg = signal(String::from("hello"));
+
+    // `v-text` sets the element's text content; unlike `v-html` the value is
+    // escaped, and template children are ignored.
+    let node = view!(
+        dom.clone(),
+        r#"<span v-text="msg.get()">ignored</span>"#
+    );
+
+    assert_eq!(dom.to_html(node), "<span>hello</span>");
+    msg.set(String::from("<world>"));
+    assert_eq!(dom.to_html(node), "<span>&lt;world&gt;</span>");
+}
