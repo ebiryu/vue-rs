@@ -23,6 +23,16 @@ enum NodeData {
     Anchor,
 }
 
+/// Escape a text node's content: `&`, `<`, `>`.
+fn escape_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Escape a double-quoted attribute value: `&`, `"`.
+fn escape_attribute(s: &str) -> String {
+    s.replace('&', "&amp;").replace('"', "&quot;")
+}
+
 /// An in-memory DOM tree for testing. Nodes are addressed by `usize` handles.
 #[derive(Clone, Default)]
 pub struct MockDom {
@@ -44,11 +54,13 @@ impl MockDom {
 
     /// Serialize the subtree rooted at `node` to an HTML-like string.
     /// Anchors render as nothing, so dynamic positioning stays invisible.
+    /// Text content and attribute values are HTML-escaped, matching how the
+    /// browser serializes nodes created via `create_text_node`/`set_attribute`.
     pub fn to_html(&self, node: usize) -> String {
         let nodes = self.nodes.borrow();
         match &nodes[node] {
             NodeData::Anchor => String::new(),
-            NodeData::Text { data } => data.clone(),
+            NodeData::Text { data } => escape_text(data),
             NodeData::Element {
                 tag,
                 attrs,
@@ -57,7 +69,7 @@ impl MockDom {
             } => {
                 let mut out = format!("<{tag}");
                 for (name, value) in attrs {
-                    let _ = write!(out, r#" {name}="{value}""#);
+                    let _ = write!(out, r#" {name}="{}""#, escape_attribute(value));
                 }
                 out.push('>');
                 // Shared borrow is re-entrant across the recursion (no mut borrow).

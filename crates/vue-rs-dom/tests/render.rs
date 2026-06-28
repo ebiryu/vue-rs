@@ -92,3 +92,24 @@ fn event_listener_is_removed_when_owning_scope_is_disposed() {
     dom.dispatch(node, "click");
     assert_eq!(count.get(), 1, "listener should be removed after dispose");
 }
+
+#[test]
+fn to_html_escapes_text_content() {
+    let dom = MockDom::new();
+    let node = El::new(dom.clone(), "p")
+        .text("a < b && c > d")
+        .finish();
+    assert_eq!(dom.to_html(node), "<p>a &lt; b &amp;&amp; c &gt; d</p>");
+}
+
+#[test]
+fn to_html_escapes_attribute_values() {
+    let dom = MockDom::new();
+    let node = El::new(dom.clone(), "div")
+        .attr("title", r#"a "quote" & <tag>"#)
+        .finish();
+    assert_eq!(
+        dom.to_html(node),
+        r#"<div title="a &quot;quote&quot; &amp; <tag>"></div>"#
+    );
+}
