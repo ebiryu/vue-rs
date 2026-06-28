@@ -9,9 +9,11 @@ use std::fmt;
 
 mod codegen;
 mod parser;
+mod script;
 mod sfc;
 mod style;
 
+pub use script::rewrite_script_sugar;
 pub use sfc::{split_sfc, Sfc};
 pub use style::{scope_css, scope_id};
 

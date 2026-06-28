@@ -69,7 +69,13 @@ pub fn component(input: TokenStream) -> TokenStream {
     let mut structs: Vec<syn::ItemStruct> = Vec::new();
     let mut body: Vec<syn::Stmt> = Vec::new();
     if let Some(src) = sfc.script.as_deref().filter(|s| !s.is_empty()) {
-        let block: syn::Block = match syn::parse_str(&format!("{{ {src} }}")) {
+        // Map Vue authoring spellings (e.g. the keyword `ref` → core `signal`)
+        // before parsing, so the body can name the keyword-safe constructors.
+        let desugared = match vue_rs_compiler::rewrite_script_sugar(src) {
+            Ok(tokens) => tokens,
+            Err(err) => return compile_error(&err.to_string()),
+        };
+        let block: syn::Block = match syn::parse2(quote! { { #desugared } }) {
             Ok(block) => block,
             Err(err) => return compile_error(&format!("invalid <script>: {err}")),
         };

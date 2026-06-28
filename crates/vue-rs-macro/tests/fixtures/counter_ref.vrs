@@ -1,0 +1,10 @@
+<template>
+  <button @click="increment()">count is {{ count.get() }}</button>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::ref;
+
+let count = ref(0);
+let increment = move || count.set(count.get() + 1);
+</script>
