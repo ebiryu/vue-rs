@@ -157,6 +157,48 @@ fn component_nested_in_element() {
 }
 
 #[test]
+fn comment_inside_element_is_skipped() {
+    compiles_to(
+        "<div><!-- hello --></div>",
+        quote! { El::new(__backend.clone(), "div").finish() },
+    );
+}
+
+#[test]
+fn comment_between_children_is_skipped() {
+    compiles_to(
+        "<ul><!-- first --><li>a</li><!-- second --><li>b</li></ul>",
+        quote! {
+            El::new(__backend.clone(), "ul")
+                .child(El::new(__backend.clone(), "li").text("a").finish())
+                .child(El::new(__backend.clone(), "li").text("b").finish())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn comment_around_root_is_skipped() {
+    compiles_to(
+        "<!-- leading --><p>a</p><!-- trailing -->",
+        quote! { El::new(__backend.clone(), "p").text("a").finish() },
+    );
+}
+
+#[test]
+fn comment_with_markup_like_content_is_skipped() {
+    compiles_to(
+        "<p>x<!-- <span>not real</span> {{ nope }} -->y</p>",
+        quote! { El::new(__backend.clone(), "p").text("xy").finish() },
+    );
+}
+
+#[test]
+fn error_on_unterminated_comment() {
+    assert!(compile_template("<div><!-- oops</div>").is_err());
+}
+
+#[test]
 fn error_on_multiple_root_elements() {
     assert!(compile_template("<p>a</p><p>b</p>").is_err());
 }

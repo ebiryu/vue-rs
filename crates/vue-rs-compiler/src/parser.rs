@@ -87,11 +87,24 @@ impl Parser {
         name
     }
 
+    /// Skip an HTML comment `<!-- ... -->`, assuming the cursor is at `<!--`.
+    fn skip_comment(&mut self) -> Result<(), String> {
+        self.pos += 4; // consume "<!--"
+        while !self.starts_with("-->") {
+            if self.bump().is_none() {
+                return Err("unterminated comment `<!--`".to_string());
+            }
+        }
+        self.pos += 3; // consume "-->"
+        Ok(())
+    }
+
     fn parse_nodes(&mut self) -> Result<Vec<Node>, String> {
         let mut nodes = Vec::new();
         loop {
             match self.peek() {
                 None => break,
+                Some('<') if self.starts_with("<!--") => self.skip_comment()?,
                 Some('<') if self.starts_with("</") => break,
                 Some('<') => nodes.push(Node::Element(self.parse_element()?)),
                 _ => nodes.extend(self.parse_text()?),
@@ -105,6 +118,10 @@ impl Parser {
         let mut buf = String::new();
         while let Some(c) = self.peek() {
             if c == '<' {
+                if self.starts_with("<!--") {
+                    self.skip_comment()?;
+                    continue;
+                }
                 break;
             }
             if self.starts_with("{{") {
