@@ -9,5 +9,5 @@ pub use runtime::{
     batch, clear_scheduler, computed, computed_raw, create_root, create_root_detached, effect,
     flush_jobs, flush_mounted, next_tick, on_cleanup, on_mounted, on_unmounted, provide_context,
     run_in_child_scope, set_scheduler, signal, signal_raw, use_context, watch, watch_immediate,
-    Memo, RootDisposer, Signal,
+    writable_computed, Memo, RootDisposer, Signal, WritableMemo,
 };

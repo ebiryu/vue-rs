@@ -120,6 +120,7 @@ mod arena_tests {
             cleanups: Vec::new(),
             contexts: HashMap::new(),
             eq: None,
+            setter: None,
             kind: Kind::Signal,
         }
     }
@@ -239,11 +240,16 @@ struct Node {
     cleanups: Vec<Box<dyn FnOnce()>>,
     contexts: HashMap<TypeId, Box<dyn Any>>, // values provided to descendants
     eq: Option<EqFn>,                        // optional equality check for dedup
+    setter: Option<SetFn>,                   // writable computed's set callback
     kind: Kind,
 }
 
 /// Compares two stored values for equality, to skip no-op updates.
 type EqFn = Box<dyn Fn(&dyn Any, &dyn Any) -> bool>;
+
+/// A writable computed's setter, type-erased: it downcasts the boxed new value
+/// and writes it back upstream.
+type SetFn = Box<dyn Fn(Box<dyn Any>)>;
 
 struct Runtime {
     nodes: Arena,
@@ -531,6 +537,7 @@ fn new_node(kind: Kind, value: Option<Box<dyn Any>>) -> NodeId {
             cleanups: Vec::new(),
             contexts: HashMap::new(),
             eq: None,
+            setter: None,
             kind,
         });
         if let Some(owner) = owner
@@ -1004,6 +1011,90 @@ impl<T: 'static> Memo<T> {
     pub fn with<R>(self, f: impl FnOnce(&T) -> R) -> R {
         read_with::<T, R>(self.id, f)
     }
+}
+
+/// A writable derived value. Vue's `computed({ get, set })`: it reads like a
+/// [`Memo`] (memoized, dependency-tracked, `PartialEq`-deduped) and, when set,
+/// runs a setter that typically writes back to upstream signals.
+pub struct WritableMemo<T> {
+    id: NodeId,
+    _t: PhantomData<T>,
+}
+
+impl<T> Clone for WritableMemo<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for WritableMemo<T> {}
+
+impl<T> PartialEq for WritableMemo<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl<T> Eq for WritableMemo<T> {}
+
+/// Create a writable derived value from a getter and a setter. Reads memoize and
+/// track dependencies like [`computed`]; [`set`](WritableMemo::set) runs `set`,
+/// which usually writes upstream signals so the value re-derives.
+pub fn writable_computed<T: PartialEq + 'static>(
+    get: impl Fn() -> T + 'static,
+    set: impl Fn(T) + 'static,
+) -> WritableMemo<T> {
+    let id = new_computed(get);
+    install_eq::<T>(id);
+    let setter: SetFn = Box::new(move |value: Box<dyn Any>| {
+        let value = value
+            .downcast::<T>()
+            .expect("type mismatch writing writable computed");
+        set(*value);
+    });
+    RT.with_borrow_mut(|rt| {
+        if let Some(node) = rt.nodes.get_mut(id) {
+            node.setter = Some(setter);
+        }
+    });
+    WritableMemo {
+        id,
+        _t: PhantomData,
+    }
+}
+
+impl<T: 'static> WritableMemo<T> {
+    /// Read with dependency tracking, cloning out the value.
+    pub fn get(self) -> T
+    where
+        T: Clone,
+    {
+        self.with(|v| v.clone())
+    }
+
+    /// Read with dependency tracking, without requiring `Clone`.
+    pub fn with<R>(self, f: impl FnOnce(&T) -> R) -> R {
+        read_with::<T, R>(self.id, f)
+    }
+
+    /// Run the setter with `value`. The setter typically writes upstream signals,
+    /// which re-derive this computed and notify its dependents.
+    pub fn set(self, value: T) {
+        set_through_setter(self.id, Box::new(value));
+    }
+}
+
+/// Invoke a writable computed's stored setter with the new value. The setter is
+/// moved out of the node while it runs so it can read and write other reactive
+/// nodes (mirroring how a computed's `compute` is taken during recompute), then
+/// restored unless the node was disposed mid-call.
+fn set_through_setter(id: NodeId, value: Box<dyn Any>) {
+    let setter = RT.with_borrow_mut(|rt| rt.nodes.get_mut(id).and_then(|n| n.setter.take()));
+    let Some(setter) = setter else { return };
+    setter(value);
+    RT.with_borrow_mut(|rt| {
+        if let Some(node) = rt.nodes.get_mut(id) {
+            node.setter = Some(setter);
+        }
+    });
 }
 
 /// Schedule `callback` to run after pending effects have flushed (Vue's
