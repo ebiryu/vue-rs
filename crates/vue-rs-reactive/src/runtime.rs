@@ -1079,6 +1079,67 @@ pub fn effect(f: impl FnMut() + 'static) {
     update_if_necessary(id); // initial run
 }
 
+/// Run `f` without subscribing the current observer to any reactive value read
+/// inside it. Restores the observer afterward. Used to keep watcher callbacks
+/// from registering dependencies.
+fn untrack<R>(f: impl FnOnce() -> R) -> R {
+    let prev = RT.with_borrow_mut(|rt| rt.observer.take());
+    let result = f();
+    RT.with_borrow_mut(|rt| rt.observer = prev);
+    result
+}
+
+/// Watch a `source` getter and run `callback` with the new and previous values
+/// whenever the source's value changes. The callback does not run on setup, and
+/// reactive reads inside it are not tracked. The watcher is owned by the current
+/// scope and disposed with it.
+pub fn watch<T, S, C>(source: S, mut callback: C)
+where
+    T: Clone + PartialEq + 'static,
+    S: Fn() -> T + 'static,
+    C: FnMut(&T, &T) + 'static,
+{
+    let mut prev: Option<T> = None;
+    effect(move || {
+        let next = source();
+        match prev.take() {
+            None => prev = Some(next),
+            Some(old) => {
+                if next != old {
+                    untrack(|| callback(&next, &old));
+                }
+                prev = Some(next);
+            }
+        }
+    });
+}
+
+/// Like [`watch`], but the callback also runs immediately on setup, with `None`
+/// for the old value. Subsequent changes pass `Some(previous)`.
+pub fn watch_immediate<T, S, C>(source: S, mut callback: C)
+where
+    T: Clone + PartialEq + 'static,
+    S: Fn() -> T + 'static,
+    C: FnMut(&T, Option<&T>) + 'static,
+{
+    let mut prev: Option<T> = None;
+    effect(move || {
+        let next = source();
+        match prev.take() {
+            None => {
+                untrack(|| callback(&next, None));
+                prev = Some(next);
+            }
+            Some(old) => {
+                if next != old {
+                    untrack(|| callback(&next, Some(&old)));
+                }
+                prev = Some(next);
+            }
+        }
+    });
+}
+
 /// Register a cleanup to run before the current owner re-runs, and when it is
 /// disposed. No-op outside a reactive scope.
 pub fn on_cleanup(f: impl FnOnce() + 'static) {
