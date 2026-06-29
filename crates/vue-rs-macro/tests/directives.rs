@@ -120,6 +120,37 @@ fn v_for_row_click_fires_handler() {
 }
 
 #[test]
+fn dynamic_attribute_argument_binds_reactive_name() {
+    let dom = MockDom::new();
+    let attr = signal("id".to_string());
+    let node = view!(
+        dom.clone(),
+        r#"<div :[attr.get()]="\"app\".to_string()"></div>"#
+    );
+    assert_eq!(dom.to_html(node), r#"<div id="app"></div>"#);
+    attr.set("title".to_string());
+    assert_eq!(dom.to_html(node), r#"<div title="app"></div>"#);
+}
+
+#[test]
+fn dynamic_event_argument_binds_reactive_name() {
+    let dom = MockDom::new();
+    let event = signal("click".to_string());
+    let fired = signal(0);
+    let node = view!(
+        dom.clone(),
+        r#"<button @[event.get()]="fired.set(fired.get() + 1)">x</button>"#
+    );
+    dom.dispatch(node, "click");
+    assert_eq!(fired.get(), 1);
+    event.set("dblclick".to_string());
+    dom.dispatch(node, "click");
+    assert_eq!(fired.get(), 1, "old listener detached");
+    dom.dispatch(node, "dblclick");
+    assert_eq!(fired.get(), 2);
+}
+
+#[test]
 fn event_modifiers_apply_options_and_run_handler() {
     let dom = MockDom::new();
     let saved = signal(0);

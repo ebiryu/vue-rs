@@ -99,6 +99,11 @@ impl Codegen {
                 })?;
                 let mut payload_fields = Vec::new();
                 for (attr, expr) in dyn_attrs {
+                    if dynamic_arg(attr).is_some() {
+                        return Err(format!(
+                            "dynamic arguments (`{attr}`) are not supported on `<slot>`"
+                        ));
+                    }
                     let attr = Ident::new(attr, Span::call_site());
                     let expr = parse_expr(expr)?;
                     payload_fields.push(quote! { #attr: #expr });
@@ -219,6 +224,13 @@ impl Codegen {
                 continue;
             }
             match attr {
+                Attr::Dyn { name, .. } | Attr::Event { name, .. }
+                    if dynamic_arg(name).is_some() =>
+                {
+                    return Err(format!(
+                        "dynamic arguments (`{name}`) are not supported on components"
+                    ));
+                }
                 Attr::Dyn { name, expr } => {
                     let field = Ident::new(name, Span::call_site());
                     let expr = parse_expr(expr)?;
@@ -560,10 +572,34 @@ fn gen_attr(attr: &Attr, base_style: Option<&TokenStream>) -> Result<TokenStream
         }
         Attr::Static { name, value } => Ok(quote! { .attr(#name, #value) }),
         Attr::Dyn { name, expr } => {
+            // A dynamic argument `:[arg]` computes the attribute name at runtime.
+            if let Some((arg, modifiers)) = dynamic_arg(name) {
+                if !modifiers.is_empty() {
+                    return Err(format!(
+                        "modifiers are not supported on dynamic attribute arguments (`:{name}`)"
+                    ));
+                }
+                let arg = parse_expr(arg)?;
+                let value = parse_expr(expr)?;
+                return Ok(quote! {
+                    .dyn_attr_named(move || (#arg).to_string(), move || (#value).to_string())
+                });
+            }
             let expr = parse_expr(expr)?;
             Ok(quote! { .dyn_attr(#name, move || (#expr).to_string()) })
         }
         Attr::Event { name, handler } => {
+            // A dynamic argument `@[arg]` computes the event name at runtime.
+            if let Some((arg, modifiers)) = dynamic_arg(name) {
+                if !modifiers.is_empty() {
+                    return Err(format!(
+                        "modifiers are not supported on dynamic event arguments (`@{name}`)"
+                    ));
+                }
+                let arg = parse_expr(arg)?;
+                let handler = parse_expr(handler)?;
+                return Ok(quote! { .on_named(move || (#arg).to_string(), move || { #handler }) });
+            }
             let handler = parse_expr(handler)?;
             let mut parts = name.split('.');
             let event = parts.next().unwrap_or("");
@@ -964,6 +1000,15 @@ fn is_style_attr(attr: &Attr) -> bool {
         Attr::Static { name, .. } | Attr::Dyn { name, .. } => name == "style",
         Attr::Event { .. } => false,
     }
+}
+
+/// If `name` is a dynamic argument `[expr]modifiers` (produced by the parser for
+/// `:[expr]` / `@[expr]`), return the inner `expr` and any trailing `.modifiers`.
+/// A real attribute name never starts with `[`, so this is unambiguous.
+fn dynamic_arg(name: &str) -> Option<(&str, &str)> {
+    let rest = name.strip_prefix('[')?;
+    let end = rest.find(']')?;
+    Some((rest[..end].trim(), &rest[end + 1..]))
 }
 
 fn is_structural(attr: &Attr) -> bool {

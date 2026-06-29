@@ -194,9 +194,43 @@ impl Parser {
         })
     }
 
+    /// Read a balanced `[ ... ]` group (cursor at `[`), returning its inner text.
+    fn read_bracketed(&mut self) -> Result<String, String> {
+        self.expect('[')?;
+        let mut inner = String::new();
+        let mut depth = 1;
+        while let Some(c) = self.peek() {
+            self.pos += 1;
+            match c {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Ok(inner.trim().to_string());
+                    }
+                }
+                _ => {}
+            }
+            inner.push(c);
+        }
+        Err("unterminated dynamic argument `[`".to_string())
+    }
+
     fn parse_attr(&mut self) -> Result<Attr, String> {
         let raw = self.read_name();
-        if raw.is_empty() {
+        // A dynamic argument `:[expr]` / `@[expr]` computes the bound name at
+        // runtime. `read_name` reads only the bare `:`/`@` prefix (it stops at
+        // `[`); read the bracketed expression and any trailing `.modifiers` here.
+        // The name is stored in `[expr]modifiers` form, which a real attribute
+        // name can never take, so codegen recognizes it unambiguously.
+        let dynamic_arg = if matches!(raw.as_str(), ":" | "@") && self.peek() == Some('[') {
+            let inner = self.read_bracketed()?;
+            let modifiers = self.read_name();
+            Some(format!("[{inner}]{modifiers}"))
+        } else {
+            None
+        };
+        if raw.is_empty() && dynamic_arg.is_none() {
             return Err(format!("unexpected character {:?} in tag", self.peek()));
         }
         let mut value = None;
@@ -245,6 +279,19 @@ impl Parser {
             self.pos = save; // boolean attribute with no value
         }
 
+        if let Some(name) = dynamic_arg {
+            return Ok(if raw == "@" {
+                Attr::Event {
+                    name,
+                    handler: value.unwrap_or_default(),
+                }
+            } else {
+                Attr::Dyn {
+                    name,
+                    expr: value.unwrap_or_default(),
+                }
+            });
+        }
         if let Some(name) = raw.strip_prefix(':') {
             Ok(Attr::Dyn {
                 name: name.to_string(),

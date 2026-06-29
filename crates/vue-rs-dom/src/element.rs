@@ -10,6 +10,10 @@ use crate::backend::{Backend, EventOptions};
 /// A mounted dynamic branch: its root node plus the disposer for its effects.
 type Branch<B> = (<B as Backend>::Node, RootDisposer);
 
+/// The live `(event name, listener)` of an `on_named` binding, shared between its
+/// resubscribing effect and the cleanup that detaches the final listener.
+type CurrentListener<B> = Rc<RefCell<Option<(String, <B as Backend>::Listener)>>>;
+
 /// Trusted raw HTML markup for the `v-html` directive.
 ///
 /// The wrapped markup is inserted into the DOM **verbatim, with no escaping**.
@@ -61,6 +65,32 @@ impl<B: Backend> El<B> {
         let node = self.node.clone();
         let name = name.to_string();
         effect(move || backend.set_attribute(&node, &name, &f()));
+        self
+    }
+
+    /// Set an attribute whose *name* is also reactive (the `:[key]` dynamic
+    /// argument). Both the name and value re-evaluate when their deps change;
+    /// when the name changes, the previously-set attribute is removed first so a
+    /// stale attribute does not linger.
+    pub fn dyn_attr_named(
+        self,
+        name: impl Fn() -> String + 'static,
+        value: impl Fn() -> String + 'static,
+    ) -> Self {
+        let backend = self.backend.clone();
+        let node = self.node.clone();
+        let mut prev: Option<String> = None;
+        effect(move || {
+            let next = name();
+            let value = value();
+            if let Some(old) = &prev
+                && *old != next
+            {
+                backend.remove_attribute(&node, old);
+            }
+            backend.set_attribute(&node, &next, &value);
+            prev = Some(next);
+        });
         self
     }
 
@@ -136,6 +166,48 @@ impl<B: Backend> El<B> {
             Rc::new(move |value: &str| batch(|| handler(value))),
         );
         self.cleanup_listener(listener);
+        self
+    }
+
+    /// Attach a value-ignoring event listener whose *event name* is reactive (the
+    /// `@[event]` dynamic argument). When the name changes, the listener is
+    /// detached and re-attached under the new name. Writes made by the handler are
+    /// batched.
+    pub fn on_named(
+        self,
+        event: impl Fn() -> String + 'static,
+        handler: impl Fn() + 'static,
+    ) -> Self {
+        // `handler` is captured by the listener (Fn), so it can't be moved into
+        // `batch`; wrap it in a closure.
+        #[allow(clippy::redundant_closure)]
+        let handler: Rc<dyn Fn(&str)> = Rc::new(move |_value: &str| batch(|| handler()));
+        // The current `(name, listener)` is shared between the resubscribing
+        // effect and the cleanup that detaches the final listener on disposal.
+        let current: CurrentListener<B> = Rc::new(RefCell::new(None));
+        let backend = self.backend.clone();
+        let node = self.node.clone();
+        let current_effect = current.clone();
+        effect(move || {
+            let next = event();
+            let mut cur = current_effect.borrow_mut();
+            if cur.as_ref().is_some_and(|(name, _)| *name == next) {
+                return;
+            }
+            if let Some((_, listener)) = cur.take() {
+                backend.remove_event_listener(&node, listener);
+            }
+            let listener =
+                backend.add_event_listener(&node, &next, EventOptions::default(), handler.clone());
+            *cur = Some((next, listener));
+        });
+        let backend = self.backend.clone();
+        let node = self.node.clone();
+        on_cleanup(move || {
+            if let Some((_, listener)) = current.borrow_mut().take() {
+                backend.remove_event_listener(&node, listener);
+            }
+        });
         self
     }
 

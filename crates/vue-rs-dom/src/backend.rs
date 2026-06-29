@@ -83,6 +83,9 @@ pub trait Backend: Clone + 'static {
     fn create_anchor(&self) -> Self::Node;
     fn set_text(&self, node: &Self::Node, data: &str);
     fn set_attribute(&self, node: &Self::Node, name: &str, value: &str);
+    /// Remove a previously-set attribute. Used when a dynamic attribute argument
+    /// (`:[key]`) changes its name, so the old attribute does not linger.
+    fn remove_attribute(&self, node: &Self::Node, name: &str);
     /// Replace the element's children with raw, unparsed-by-us markup (the
     /// `v-html` directive). The backend inserts `html` without escaping.
     fn set_inner_html(&self, node: &Self::Node, html: &str);

@@ -533,6 +533,49 @@ fn bound_attribute_value_keeps_escaped_quotes() {
 }
 
 #[test]
+fn dynamic_attribute_argument_becomes_dyn_attr_named() {
+    // `:[name]="value"` computes the attribute name at runtime from the bracketed
+    // Rust expression; both the name and value re-evaluate reactively.
+    compiles_to(
+        r#"<a :[attr]="url"></a>"#,
+        quote! {
+            El::new(__backend.clone(), "a")
+                .dyn_attr_named(move || (attr).to_string(), move || (url).to_string())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn dynamic_event_argument_becomes_on_named() {
+    // `@[event]="handler"` computes the event name at runtime; the listener is
+    // re-attached when the name changes.
+    compiles_to(
+        r#"<button @[evt]="go()"></button>"#,
+        quote! {
+            El::new(__backend.clone(), "button")
+                .on_named(move || (evt).to_string(), move || { go() })
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn dynamic_attribute_argument_with_modifier_errors() {
+    assert!(compile_template(r#"<a :[attr].camel="url"></a>"#).is_err());
+}
+
+#[test]
+fn dynamic_event_argument_with_modifier_errors() {
+    assert!(compile_template(r#"<button @[evt].stop="go()"></button>"#).is_err());
+}
+
+#[test]
+fn dynamic_argument_on_component_errors() {
+    assert!(compile_template(r#"<Child :[key]="v" />"#).is_err());
+}
+
+#[test]
 fn self_closing_element() {
     compiles_to(
         r#"<input :value="v()" />"#,

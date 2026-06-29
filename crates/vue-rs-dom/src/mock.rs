@@ -253,6 +253,12 @@ impl Backend for MockDom {
         }
     }
 
+    fn remove_attribute(&self, node: &usize, name: &str) {
+        if let NodeData::Element { attrs, .. } = &mut self.nodes.borrow_mut()[*node] {
+            attrs.retain(|(n, _)| n != name);
+        }
+    }
+
     fn set_inner_html(&self, node: &usize, html: &str) {
         if let NodeData::Element { inner_html, .. } = &mut self.nodes.borrow_mut()[*node] {
             *inner_html = Some(html.to_string());

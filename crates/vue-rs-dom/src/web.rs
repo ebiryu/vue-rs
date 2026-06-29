@@ -112,6 +112,11 @@ impl Backend for WebDom {
         element.set_attribute(name, value).expect("set_attribute");
     }
 
+    fn remove_attribute(&self, node: &web_sys::Node, name: &str) {
+        let element: &web_sys::Element = node.unchecked_ref();
+        element.remove_attribute(name).expect("remove_attribute");
+    }
+
     fn set_inner_html(&self, node: &web_sys::Node, html: &str) {
         let element: &web_sys::Element = node.unchecked_ref();
         element.set_inner_html(html);

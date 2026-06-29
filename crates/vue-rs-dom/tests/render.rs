@@ -56,6 +56,73 @@ fn dyn_attr_updates_when_signal_changes() {
 }
 
 #[test]
+fn dyn_attr_named_sets_and_renames_attribute() {
+    // The `:[key]` dynamic argument computes the attribute name reactively; when
+    // the name changes the old attribute is removed before the new one is set.
+    let dom = MockDom::new();
+    let attr = signal("id".to_string());
+    let value = signal("a".to_string());
+    let node = El::new(dom.clone(), "div")
+        .dyn_attr_named(move || attr.get(), move || value.get())
+        .finish();
+    assert_eq!(dom.to_html(node), r#"<div id="a"></div>"#);
+
+    value.set("b".to_string());
+    assert_eq!(dom.to_html(node), r#"<div id="b"></div>"#);
+
+    attr.set("title".to_string());
+    assert_eq!(
+        dom.to_html(node),
+        r#"<div title="b"></div>"#,
+        "renaming should drop the stale attribute"
+    );
+}
+
+#[test]
+fn on_named_resubscribes_when_event_name_changes() {
+    let dom = MockDom::new();
+    let event = signal("click".to_string());
+    let clicks = signal(0);
+    let node = El::new(dom.clone(), "button")
+        .on_named(move || event.get(), move || clicks.set(clicks.get() + 1))
+        .finish();
+
+    dom.dispatch(node, "click");
+    assert_eq!(clicks.get(), 1);
+
+    event.set("dblclick".to_string());
+    // The old `click` listener is detached; only `dblclick` fires now.
+    dom.dispatch(node, "click");
+    assert_eq!(clicks.get(), 1, "old listener should be detached");
+    dom.dispatch(node, "dblclick");
+    assert_eq!(clicks.get(), 2);
+}
+
+#[test]
+fn on_named_listener_is_removed_when_owning_scope_is_disposed() {
+    let dom = MockDom::new();
+    let clicks = signal(0);
+    let node = std::cell::Cell::new(0usize);
+    let disposer = create_root(|| {
+        let n = El::new(dom.clone(), "button")
+            .on_named(
+                move || "click".to_string(),
+                move || clicks.set(clicks.get() + 1),
+            )
+            .finish();
+        node.set(n);
+    });
+    let node = node.get();
+
+    dom.dispatch(node, "click");
+    assert_eq!(clicks.get(), 1);
+
+    disposer.dispose();
+    dom.dispatch(node, "click");
+    assert_eq!(clicks.get(), 1, "listener should be removed after dispose");
+}
+
+#[test]
 fn dyn_inner_html_sets_raw_markup_and_updates() {
     let dom = MockDom::new();
     let html = signal("<b>hi</b>".to_string());
