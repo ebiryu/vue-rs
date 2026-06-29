@@ -155,6 +155,97 @@ fn static_class_merges_with_plain_dynamic_class() {
 }
 
 #[test]
+fn plain_dynamic_style_stays_simple() {
+    // A lone plain `:style` with no static sibling keeps the simple path.
+    compiles_to(
+        r#"<div :style="style_str()"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attr("style", move || (style_str()).to_string())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn style_object_syntax_becomes_style_list() {
+    // `:style="{ prop: value }"` builds each `prop: value` declaration. A quoted
+    // key is taken verbatim; a bare camelCase key is converted to kebab-case.
+    compiles_to(
+        r#"<div :style="{ color: color(), 'font-size': size() }"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attr("style", move || ::vue_rs_dom::StyleList::new()
+                    .push_prop("color", (color()).to_string())
+                    .push_prop("font-size", (size()).to_string())
+                    .finish())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn style_object_camel_case_key_becomes_kebab() {
+    compiles_to(
+        r#"<div :style="{ fontSize: size() }"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attr("style", move || ::vue_rs_dom::StyleList::new()
+                    .push_prop("font-size", (size()).to_string())
+                    .finish())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn style_array_syntax_becomes_style_list() {
+    // `:style="[a, b]"` joins each element's declaration string.
+    compiles_to(
+        r#"<div :style="[base(), extra()]"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attr("style", move || ::vue_rs_dom::StyleList::new()
+                    .push(base())
+                    .push(extra())
+                    .finish())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn static_style_merges_with_object_style() {
+    // A static `style` is the base the dynamic `:style` is merged onto.
+    compiles_to(
+        r#"<div style="margin: 0" :style="{ color: color() }"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attr("style", move || ::vue_rs_dom::StyleList::new()
+                    .push("margin: 0")
+                    .push_prop("color", (color()).to_string())
+                    .finish())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn static_style_merges_with_plain_dynamic_style() {
+    compiles_to(
+        r#"<div style="margin: 0" :style="style_str()"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attr("style", move || ::vue_rs_dom::StyleList::new()
+                    .push("margin: 0")
+                    .push(style_str())
+                    .finish())
+                .finish()
+        },
+    );
+}
+
+#[test]
 fn event_handler_becomes_on() {
     compiles_to(
         r#"<button @click="count.set(count.get() + 1)">x</button>"#,

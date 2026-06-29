@@ -10,6 +10,7 @@ mod class;
 mod element;
 mod mock;
 mod slots;
+mod style;
 #[cfg(feature = "web")]
 mod web;
 
@@ -19,5 +20,6 @@ pub use class::ClassList;
 pub use element::{switch_views, El, RawHtml};
 pub use mock::{DispatchOutcome, MockDom, MockEvent};
 pub use slots::SlotFn;
+pub use style::StyleList;
 #[cfg(feature = "web")]
 pub use web::{install_microtask_scheduler, WebDom};

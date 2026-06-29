@@ -373,6 +373,70 @@ fn static_class_merges_with_dynamic_class() {
 }
 
 #[test]
+fn style_object_syntax_builds_style_reactively() {
+    let dom = MockDom::new();
+    let color = signal(String::from("red"));
+    let size = signal(String::from("14px"));
+
+    let node = view!(
+        dom.clone(),
+        r#"<div :style="{ color: color.get(), fontSize: size.get() }"></div>"#
+    );
+
+    // A bare camelCase key (`fontSize`) renders as kebab-case (`font-size`).
+    assert_eq!(
+        dom.to_html(node),
+        r#"<div style="color: red; font-size: 14px"></div>"#
+    );
+    color.set(String::from("blue"));
+    assert_eq!(
+        dom.to_html(node),
+        r#"<div style="color: blue; font-size: 14px"></div>"#
+    );
+    // An empty value drops the declaration without a stray separator.
+    size.set(String::new());
+    assert_eq!(dom.to_html(node), r#"<div style="color: blue"></div>"#);
+}
+
+#[test]
+fn style_array_syntax_joins_styles_reactively() {
+    let dom = MockDom::new();
+    let extra = signal(String::from("color: blue"));
+
+    let node = view!(dom.clone(), r#"<div :style="[\"margin: 0\", extra.get()]"></div>"#);
+
+    assert_eq!(
+        dom.to_html(node),
+        r#"<div style="margin: 0; color: blue"></div>"#
+    );
+    // An empty fragment leaves no stray separator.
+    extra.set(String::new());
+    assert_eq!(dom.to_html(node), r#"<div style="margin: 0"></div>"#);
+}
+
+#[test]
+fn static_style_merges_with_dynamic_style() {
+    let dom = MockDom::new();
+    let color = signal(String::from("red"));
+
+    let node = view!(
+        dom.clone(),
+        r#"<div style="margin: 0" :style="{ color: color.get() }"></div>"#
+    );
+
+    // The static `style` is always present; the dynamic part merges onto it.
+    assert_eq!(
+        dom.to_html(node),
+        r#"<div style="margin: 0; color: red"></div>"#
+    );
+    color.set(String::from("blue"));
+    assert_eq!(
+        dom.to_html(node),
+        r#"<div style="margin: 0; color: blue"></div>"#
+    );
+}
+
+#[test]
 fn v_model_two_way_binding() {
     let dom = MockDom::new();
     let text = signal(String::from("hi"));

@@ -130,14 +130,10 @@ impl Codegen {
         // expression that yields the base style `String`; the folded `style` attr
         // is then skipped below since it is already woven in.
         let base_style: Option<TokenStream> = if find_static(el, "v-show").is_some() {
-            Some(if let Some(value) = find_static(el, "style") {
-                quote! { #value.to_string() }
-            } else if let Some(expr) = find_dyn(el, "style") {
-                let expr = parse_expr(expr)?;
-                quote! { (#expr).to_string() }
-            } else {
-                quote! { ::std::string::String::new() }
-            })
+            Some(
+                style_value(find_static(el, "style"), find_dyn(el, "style"))?
+                    .unwrap_or_else(|| quote! { ::std::string::String::new() }),
+            )
         } else {
             None
         };
@@ -155,13 +151,41 @@ impl Codegen {
             }
             _ => None,
         };
+        // A static `style` and a dynamic `:style` (object/array/plain) are merged
+        // into one `style` string via `StyleList`, mirroring `:class`. When
+        // `v-show` is present it already owns the `style` attribute (folding the
+        // toggle into `base_style`), so there is no separate merge then.
+        let merged_style: Option<TokenStream> = if base_style.is_some() {
+            None
+        } else {
+            match find_dyn(el, "style") {
+                Some(expr)
+                    if find_static(el, "style").is_some()
+                        || !matches!(style_syntax(expr), StyleSyntax::Plain) =>
+                {
+                    style_value(find_static(el, "style"), Some(expr))?
+                        .map(|value| quote! { .dyn_attr("style", move || #value) })
+                }
+                _ => None,
+            }
+        };
         let mut class_emitted = false;
+        let mut style_emitted = false;
         for attr in &el.attrs {
             if is_structural(attr) {
                 continue; // v-if / v-else-if / v-else / v-for / :key are handled by the parent
             }
             if base_style.is_some() && is_style_attr(attr) {
                 continue; // folded into the `v-show` toggle below
+            }
+            if let Some(merged) = &merged_style
+                && is_style_attr(attr)
+            {
+                if !style_emitted {
+                    chain = quote! { #chain #merged };
+                    style_emitted = true;
+                }
+                continue;
             }
             if let Some(merged) = &merged_class
                 && is_class_attr(attr)
@@ -695,6 +719,113 @@ fn parse_class_object(expr: &str) -> Result<Vec<(String, String)>, String> {
         entries.push((name, cond.to_string()));
     }
     Ok(entries)
+}
+
+/// The shape of a `:style` binding's expression.
+enum StyleSyntax {
+    /// `{ prop: value, .. }` — one `prop: value` declaration per entry.
+    Object,
+    /// `[a, b, ..]` — join each element's declaration string.
+    Array,
+    /// Any other expression, yielding a declaration string directly.
+    Plain,
+}
+
+fn style_syntax(expr: &str) -> StyleSyntax {
+    let t = expr.trim();
+    if t.starts_with('{') && t.ends_with('}') {
+        StyleSyntax::Object
+    } else if t.starts_with('[') && t.ends_with(']') {
+        StyleSyntax::Array
+    } else {
+        StyleSyntax::Plain
+    }
+}
+
+/// Build the expression that yields an element's merged `style` string from its
+/// static `style` and dynamic `:style` (object/array/plain), via `StyleList`.
+/// Returns `None` when the element has neither, so the caller can fall back to an
+/// empty string (`v-show`) or skip the merge entirely.
+fn style_value(
+    static_style: Option<&str>,
+    dyn_style: Option<&str>,
+) -> Result<Option<TokenStream>, String> {
+    if static_style.is_none() && dyn_style.is_none() {
+        return Ok(None);
+    }
+    let mut chain = quote! { ::vue_rs_dom::StyleList::new() };
+    if let Some(value) = static_style {
+        chain = quote! { #chain.push(#value) };
+    }
+    if let Some(expr) = dyn_style {
+        match style_syntax(expr) {
+            StyleSyntax::Object => {
+                for (prop, value) in parse_style_object(expr)? {
+                    let value = parse_expr(&value)?;
+                    chain = quote! { #chain.push_prop(#prop, (#value).to_string()) };
+                }
+            }
+            StyleSyntax::Array => {
+                let array: syn::ExprArray = syn::parse_str(expr)
+                    .map_err(|e| format!("invalid `:style` array `{expr}`: {e}"))?;
+                for elem in array.elems {
+                    chain = quote! { #chain.push(#elem) };
+                }
+            }
+            StyleSyntax::Plain => {
+                let expr = parse_expr(expr)?;
+                chain = quote! { #chain.push(#expr) };
+            }
+        }
+    }
+    Ok(Some(quote! { #chain.finish() }))
+}
+
+/// Parse a `:style` object literal `{ prop: value, .. }` into `(prop, value)`
+/// pairs. A property name may be a bare camelCase token (`fontSize`, normalized
+/// to `font-size`) or a quoted string (`'font-size'`, taken verbatim).
+fn parse_style_object(expr: &str) -> Result<Vec<(String, String)>, String> {
+    let inner = expr
+        .trim()
+        .strip_prefix('{')
+        .and_then(|s| s.strip_suffix('}'))
+        .ok_or_else(|| format!("invalid `:style` object `{expr}`"))?;
+    let mut entries = Vec::new();
+    for raw in split_top_level(inner, ',') {
+        let entry = raw.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let colon = find_object_colon(entry)
+            .ok_or_else(|| format!("`:style` object entry `{entry}` must be `prop: value`"))?;
+        let prop = css_prop_name(entry[..colon].trim());
+        let value = entry[colon + 1..].trim();
+        if value.is_empty() {
+            return Err(format!("`:style` object entry `{entry}` has no value"));
+        }
+        entries.push((prop, value.to_string()));
+    }
+    Ok(entries)
+}
+
+/// Normalize a `:style` object key to a CSS property name. A quoted key is taken
+/// verbatim (after unquoting); a bare camelCase key is converted to kebab-case
+/// (`fontSize` → `font-size`), matching Vue's `:style` key handling.
+fn css_prop_name(key: &str) -> String {
+    let key = key.trim();
+    if matches!(key.chars().next(), Some('\'' | '"')) {
+        return unquote(key);
+    }
+    let mut out = String::new();
+    for c in key.chars() {
+        if c.is_ascii_uppercase() {
+            out.push('-');
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Split `s` on top-level `delim`, ignoring delimiters nested inside brackets,
