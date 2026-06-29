@@ -479,11 +479,44 @@ fn slot_directive(el: &Element) -> Option<(&str, &str)> {
 
 fn gen_attr(attr: &Attr, base_style: Option<&TokenStream>) -> Result<TokenStream, String> {
     match attr {
-        Attr::Static { name, value } if name == "v-model" => {
+        Attr::Static { name, value } if name == "v-model" || name.starts_with("v-model.") => {
             let model = parse_expr(value)?;
+            // Modifiers refine the binding: `.lazy` syncs on `change` instead of
+            // `input`; `.trim` strips surrounding whitespace; `.number` parses the
+            // value into the model's type, keeping the current value when the input
+            // is not a valid number. `.trim` applies before `.number`.
+            let mut lazy = false;
+            let mut trim = false;
+            let mut number = false;
+            for m in name.split('.').skip(1) {
+                match m {
+                    "lazy" => lazy = true,
+                    "trim" => trim = true,
+                    "number" => number = true,
+                    other => {
+                        return Err(format!("unknown v-model modifier `.{other}`"));
+                    }
+                }
+            }
+            let event = if lazy { "change" } else { "input" };
+            let text = if trim {
+                quote! { __value.trim() }
+            } else {
+                quote! { __value }
+            };
+            let set_arg = if number {
+                quote! {
+                    match #text.parse() {
+                        ::core::result::Result::Ok(__n) => __n,
+                        ::core::result::Result::Err(_) => (#model).get(),
+                    }
+                }
+            } else {
+                quote! { #text.to_string() }
+            };
             Ok(quote! {
                 .dyn_attr("value", move || ((#model).get()).to_string())
-                .on_value("input", move |__value| (#model).set(__value.to_string()))
+                .on_value(#event, move |__value| (#model).set(#set_arg))
             })
         }
         // `v-show` keeps the element mounted (unlike `v-if`) and reactively

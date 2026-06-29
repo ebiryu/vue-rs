@@ -452,6 +452,48 @@ fn v_model_two_way_binding() {
 }
 
 #[test]
+fn v_model_lazy_syncs_on_change_not_input() {
+    let dom = MockDom::new();
+    let text = signal(String::from("hi"));
+
+    let node = view!(dom.clone(), r#"<input v-model.lazy="text" />"#);
+
+    // `input` events are ignored with `.lazy`; only `change` syncs.
+    dom.dispatch_value(node, "input", "typing");
+    assert_eq!(text.get(), "hi");
+
+    dom.dispatch_value(node, "change", "committed");
+    assert_eq!(text.get(), "committed");
+    assert_eq!(dom.to_html(node), r#"<input value="committed"></input>"#);
+}
+
+#[test]
+fn v_model_trim_strips_surrounding_whitespace() {
+    let dom = MockDom::new();
+    let text = signal(String::new());
+
+    let node = view!(dom.clone(), r#"<input v-model.trim="text" />"#);
+
+    dom.dispatch_value(node, "input", "  spaced  ");
+    assert_eq!(text.get(), "spaced");
+}
+
+#[test]
+fn v_model_number_parses_into_numeric_model() {
+    let dom = MockDom::new();
+    let count = signal(0_i32);
+
+    let node = view!(dom.clone(), r#"<input v-model.number="count" />"#);
+
+    dom.dispatch_value(node, "input", "42");
+    assert_eq!(count.get(), 42);
+
+    // Invalid input keeps the current value rather than resetting it.
+    dom.dispatch_value(node, "input", "abc");
+    assert_eq!(count.get(), 42);
+}
+
+#[test]
 fn v_html_renders_raw_markup_reactively() {
     let dom = MockDom::new();
     let body = signal(String::from("<b>bold</b>"));

@@ -439,6 +439,86 @@ fn mouse_button_modifier_on_keyboard_event_errors() {
 }
 
 #[test]
+fn v_model_lowers_to_value_attr_and_input_listener() {
+    compiles_to(
+        r#"<input v-model="text" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .dyn_attr("value", move || ((text).get()).to_string())
+                .on_value("input", move |__value| (text).set(__value.to_string()))
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_model_lazy_modifier_uses_change_event() {
+    compiles_to(
+        r#"<input v-model.lazy="text" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .dyn_attr("value", move || ((text).get()).to_string())
+                .on_value("change", move |__value| (text).set(__value.to_string()))
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_model_trim_modifier_trims_the_value() {
+    compiles_to(
+        r#"<input v-model.trim="text" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .dyn_attr("value", move || ((text).get()).to_string())
+                .on_value("input", move |__value| (text).set(__value.trim().to_string()))
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_model_number_modifier_parses_the_value() {
+    compiles_to(
+        r#"<input v-model.number="count" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .dyn_attr("value", move || ((count).get()).to_string())
+                .on_value("input", move |__value| (count).set(
+                    match __value.parse() {
+                        ::core::result::Result::Ok(__n) => __n,
+                        ::core::result::Result::Err(_) => (count).get(),
+                    }
+                ))
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_model_trim_and_number_modifiers_combine() {
+    compiles_to(
+        r#"<input v-model.trim.number="count" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .dyn_attr("value", move || ((count).get()).to_string())
+                .on_value("input", move |__value| (count).set(
+                    match __value.trim().parse() {
+                        ::core::result::Result::Ok(__n) => __n,
+                        ::core::result::Result::Err(_) => (count).get(),
+                    }
+                ))
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_model_unknown_modifier_errors() {
+    assert!(compile_template(r#"<input v-model.bogus="text" />"#).is_err());
+}
+
+#[test]
 fn bound_attribute_value_keeps_escaped_quotes() {
     // A backslash-escaped quote inside the attribute value embeds the delimiter
     // quote into the Rust expression instead of terminating the value early.
