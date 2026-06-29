@@ -141,12 +141,36 @@ impl Codegen {
         } else {
             None
         };
+        // A static `class` and a dynamic `:class` (object/array/plain) are merged
+        // into one `class` string via `ClassList`. The merged attribute is emitted
+        // once, at the first class attribute's position; later class attributes are
+        // skipped. A lone plain `:class` (no static sibling) keeps the simpler
+        // `gen_attr` path below.
+        let merged_class: Option<TokenStream> = match find_dyn(el, "class") {
+            Some(expr)
+                if find_static(el, "class").is_some()
+                    || !matches!(class_syntax(expr), ClassSyntax::Plain) =>
+            {
+                Some(gen_class(find_static(el, "class"), expr)?)
+            }
+            _ => None,
+        };
+        let mut class_emitted = false;
         for attr in &el.attrs {
             if is_structural(attr) {
                 continue; // v-if / v-else-if / v-else / v-for / :key are handled by the parent
             }
             if base_style.is_some() && is_style_attr(attr) {
                 continue; // folded into the `v-show` toggle below
+            }
+            if let Some(merged) = &merged_class
+                && is_class_attr(attr)
+            {
+                if !class_emitted {
+                    chain = quote! { #chain #merged };
+                    class_emitted = true;
+                }
+                continue;
             }
             let part = gen_attr(attr, base_style.as_ref())?;
             chain = quote! { #chain #part };
@@ -593,6 +617,181 @@ fn key_name(m: &str) -> Option<&'static str> {
         "end" => "End",
         _ => return None,
     })
+}
+
+/// The shape of a `:class` binding's expression.
+enum ClassSyntax {
+    /// `{ name: cond, .. }` — toggle each class by its condition.
+    Object,
+    /// `[a, b, ..]` — join each element's class string.
+    Array,
+    /// Any other expression, yielding a class string directly.
+    Plain,
+}
+
+fn class_syntax(expr: &str) -> ClassSyntax {
+    let t = expr.trim();
+    if t.starts_with('{') && t.ends_with('}') {
+        ClassSyntax::Object
+    } else if t.starts_with('[') && t.ends_with(']') {
+        ClassSyntax::Array
+    } else {
+        ClassSyntax::Plain
+    }
+}
+
+/// Build the merged `class` attribute for an element carrying a dynamic `:class`,
+/// folding in the static `class` (if any) as the leading fragment. Object entries
+/// become `push_if`, array elements and a plain expression become `push`.
+fn gen_class(static_class: Option<&str>, dyn_expr: &str) -> Result<TokenStream, String> {
+    let mut chain = quote! { ::vue_rs_dom::ClassList::new() };
+    if let Some(value) = static_class {
+        chain = quote! { #chain.push(#value) };
+    }
+    match class_syntax(dyn_expr) {
+        ClassSyntax::Object => {
+            for (name, cond) in parse_class_object(dyn_expr)? {
+                let cond = parse_expr(&cond)?;
+                chain = quote! { #chain.push_if(#name, #cond) };
+            }
+        }
+        ClassSyntax::Array => {
+            let array: syn::ExprArray = syn::parse_str(dyn_expr)
+                .map_err(|e| format!("invalid `:class` array `{dyn_expr}`: {e}"))?;
+            for elem in array.elems {
+                chain = quote! { #chain.push(#elem) };
+            }
+        }
+        ClassSyntax::Plain => {
+            let expr = parse_expr(dyn_expr)?;
+            chain = quote! { #chain.push(#expr) };
+        }
+    }
+    Ok(quote! { .dyn_attr("class", move || #chain.finish()) })
+}
+
+/// Parse a `:class` object literal `{ name: cond, .. }` into `(name, condition)`
+/// pairs. A name may be a bare token (`active`) or a quoted string
+/// (`'text-danger'`); either way the class name is taken verbatim.
+fn parse_class_object(expr: &str) -> Result<Vec<(String, String)>, String> {
+    let inner = expr
+        .trim()
+        .strip_prefix('{')
+        .and_then(|s| s.strip_suffix('}'))
+        .ok_or_else(|| format!("invalid `:class` object `{expr}`"))?;
+    let mut entries = Vec::new();
+    for raw in split_top_level(inner, ',') {
+        let entry = raw.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let colon = find_object_colon(entry)
+            .ok_or_else(|| format!("`:class` object entry `{entry}` must be `name: condition`"))?;
+        let name = unquote(entry[..colon].trim());
+        let cond = entry[colon + 1..].trim();
+        if cond.is_empty() {
+            return Err(format!("`:class` object entry `{entry}` has no condition"));
+        }
+        entries.push((name, cond.to_string()));
+    }
+    Ok(entries)
+}
+
+/// Split `s` on top-level `delim`, ignoring delimiters nested inside brackets,
+/// parentheses, braces, or string literals.
+fn split_top_level(s: &str, delim: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut buf = String::new();
+    let mut depth: i32 = 0;
+    let mut string: Option<char> = None;
+    let mut escaped = false;
+    for c in s.chars() {
+        if let Some(q) = string {
+            buf.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == q {
+                string = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' => {
+                string = Some(c);
+                buf.push(c);
+            }
+            '(' | '[' | '{' => {
+                depth += 1;
+                buf.push(c);
+            }
+            ')' | ']' | '}' => {
+                depth -= 1;
+                buf.push(c);
+            }
+            _ if c == delim && depth == 0 => parts.push(std::mem::take(&mut buf)),
+            _ => buf.push(c),
+        }
+    }
+    parts.push(buf);
+    parts
+}
+
+/// The byte index of the top-level `:` separating an object entry's name from its
+/// condition. A `::` path separator is skipped so a path-bearing condition does
+/// not capture the wrong colon.
+fn find_object_colon(s: &str) -> Option<usize> {
+    let mut depth: i32 = 0;
+    let mut string: Option<char> = None;
+    let mut escaped = false;
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if let Some(q) = string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == q {
+                string = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' => string = Some(c),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ':' if depth == 0 => {
+                if matches!(chars.peek(), Some((_, ':'))) {
+                    chars.next(); // a `::` path separator, not the entry's colon
+                } else {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Strip a single matching pair of surrounding quotes, if present.
+fn unquote(s: &str) -> String {
+    let mut chars = s.chars();
+    if let (Some(first @ ('\'' | '"')), Some(last)) = (chars.next(), s.chars().last())
+        && first == last
+        && s.chars().count() >= 2
+    {
+        return s[first.len_utf8()..s.len() - last.len_utf8()].to_string();
+    }
+    s.to_string()
+}
+
+/// Whether `attr` sets the element's `class` (static `class="…"` or `:class="…"`).
+fn is_class_attr(attr: &Attr) -> bool {
+    match attr {
+        Attr::Static { name, .. } | Attr::Dyn { name, .. } => name == "class",
+        Attr::Event { .. } => false,
+    }
 }
 
 /// Whether `attr` sets the element's `style` (static `style="…"` or `:style="…"`).

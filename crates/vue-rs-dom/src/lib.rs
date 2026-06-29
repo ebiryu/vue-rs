@@ -6,6 +6,7 @@
 
 mod backend;
 mod callback;
+mod class;
 mod element;
 mod mock;
 mod slots;
@@ -14,6 +15,7 @@ mod web;
 
 pub use backend::{Backend, EventOptions};
 pub use callback::Callback;
+pub use class::ClassList;
 pub use element::{switch_views, El, RawHtml};
 pub use mock::{DispatchOutcome, MockDom, MockEvent};
 pub use slots::SlotFn;

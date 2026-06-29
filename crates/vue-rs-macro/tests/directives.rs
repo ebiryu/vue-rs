@@ -323,6 +323,56 @@ fn v_show_merges_with_dynamic_style() {
 }
 
 #[test]
+fn class_object_syntax_toggles_classes_reactively() {
+    let dom = MockDom::new();
+    let active = signal(true);
+    let error = signal(false);
+
+    let node = view!(
+        dom.clone(),
+        r#"<div :class="{ active: active.get(), 'text-danger': error.get() }"></div>"#
+    );
+
+    assert_eq!(dom.to_html(node), r#"<div class="active"></div>"#);
+    error.set(true);
+    assert_eq!(
+        dom.to_html(node),
+        r#"<div class="active text-danger"></div>"#
+    );
+    active.set(false);
+    assert_eq!(dom.to_html(node), r#"<div class="text-danger"></div>"#);
+}
+
+#[test]
+fn class_array_syntax_joins_classes_reactively() {
+    let dom = MockDom::new();
+    let extra = signal(String::from("b"));
+
+    let node = view!(dom.clone(), r#"<div :class="[\"a\", extra.get()]"></div>"#);
+
+    assert_eq!(dom.to_html(node), r#"<div class="a b"></div>"#);
+    // An empty fragment leaves no stray separator.
+    extra.set(String::new());
+    assert_eq!(dom.to_html(node), r#"<div class="a"></div>"#);
+}
+
+#[test]
+fn static_class_merges_with_dynamic_class() {
+    let dom = MockDom::new();
+    let active = signal(false);
+
+    let node = view!(
+        dom.clone(),
+        r#"<div class="card" :class="{ active: active.get() }"></div>"#
+    );
+
+    // The static `class` is always present; the dynamic part merges onto it.
+    assert_eq!(dom.to_html(node), r#"<div class="card"></div>"#);
+    active.set(true);
+    assert_eq!(dom.to_html(node), r#"<div class="card active"></div>"#);
+}
+
+#[test]
 fn v_model_two_way_binding() {
     let dom = MockDom::new();
     let text = signal(String::from("hi"));
@@ -361,10 +411,7 @@ fn v_text_renders_text_content_reactively() {
 
     // `v-text` sets the element's text content; unlike `v-html` the value is
     // escaped, and template children are ignored.
-    let node = view!(
-        dom.clone(),
-        r#"<span v-text="msg.get()">ignored</span>"#
-    );
+    let node = view!(dom.clone(), r#"<span v-text="msg.get()">ignored</span>"#);
 
     assert_eq!(dom.to_html(node), "<span>hello</span>");
     msg.set(String::from("<world>"));

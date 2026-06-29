@@ -92,6 +92,69 @@ fn bound_attribute_becomes_dyn_attr() {
 }
 
 #[test]
+fn class_object_syntax_becomes_class_list() {
+    // `:class="{ name: cond }"` toggles each class by its condition.
+    compiles_to(
+        r#"<div :class="{ active: is_active(), 'text-danger': has_error() }"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attr("class", move || ::vue_rs_dom::ClassList::new()
+                    .push_if("active", is_active())
+                    .push_if("text-danger", has_error())
+                    .finish())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn class_array_syntax_becomes_class_list() {
+    // `:class="[a, b]"` joins each element's class string.
+    compiles_to(
+        r#"<div :class="[base(), extra()]"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attr("class", move || ::vue_rs_dom::ClassList::new()
+                    .push(base())
+                    .push(extra())
+                    .finish())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn static_class_merges_with_object_class() {
+    // A static `class` is the base the dynamic `:class` is merged onto.
+    compiles_to(
+        r#"<div class="card" :class="{ active: on() }"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attr("class", move || ::vue_rs_dom::ClassList::new()
+                    .push("card")
+                    .push_if("active", on())
+                    .finish())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn static_class_merges_with_plain_dynamic_class() {
+    compiles_to(
+        r#"<div class="card" :class="cls()"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attr("class", move || ::vue_rs_dom::ClassList::new()
+                    .push("card")
+                    .push(cls())
+                    .finish())
+                .finish()
+        },
+    );
+}
+
+#[test]
 fn event_handler_becomes_on() {
     compiles_to(
         r#"<button @click="count.set(count.get() + 1)">x</button>"#,
