@@ -80,6 +80,43 @@ fn v_text_ignores_template_children() {
 }
 
 #[test]
+fn template_ref_becomes_node_ref() {
+    // `ref="el"` binds the element's node into the `el` template ref handle.
+    compiles_to(
+        r#"<input ref="el" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .node_ref(&el)
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn template_ref_coexists_with_other_attributes() {
+    compiles_to(
+        r#"<input ref="field" :value="text()" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .node_ref(&field)
+                .dyn_attr("value", move || (text()).to_string())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn template_ref_with_non_identifier_value_errors() {
+    assert!(compile_template(r#"<input ref="a b" />"#).is_err());
+}
+
+#[test]
+fn template_ref_on_component_errors() {
+    // Component instance refs (`defineExpose`) are not supported yet.
+    assert!(compile_template(r#"<Child ref="c" />"#).is_err());
+}
+
+#[test]
 fn bound_attribute_becomes_dyn_attr() {
     compiles_to(
         r#"<div :class="cls()"></div>"#,

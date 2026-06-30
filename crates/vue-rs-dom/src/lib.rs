@@ -9,6 +9,7 @@ mod callback;
 mod class;
 mod element;
 mod mock;
+mod node_ref;
 mod slots;
 mod style;
 #[cfg(feature = "web")]
@@ -19,6 +20,7 @@ pub use callback::Callback;
 pub use class::ClassList;
 pub use element::{switch_views, El, RawHtml};
 pub use mock::{DispatchOutcome, MockDom, MockEvent};
+pub use node_ref::{template_ref, TemplateRef};
 pub use slots::SlotFn;
 pub use style::StyleList;
 #[cfg(feature = "web")]

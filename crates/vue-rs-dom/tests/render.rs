@@ -1,8 +1,34 @@
 //! Contract for DOM rendering primitives, exercised against the in-memory
 //! `MockDom` backend so the reactive wiring is testable without a browser.
 
-use vue_rs_dom::{El, EventOptions, MockDom, MockEvent, RawHtml};
+use vue_rs_dom::{template_ref, El, EventOptions, MockDom, MockEvent, RawHtml};
 use vue_rs_reactive::{create_root, signal};
+
+#[test]
+fn node_ref_captures_the_built_node() {
+    let dom = MockDom::new();
+    let el = template_ref();
+    let node = El::new(dom.clone(), "input").node_ref(&el).finish();
+    assert_eq!(el.get(), Some(node), "the ref holds the element's node");
+}
+
+#[test]
+fn node_ref_is_empty_before_the_element_is_built() {
+    let el = template_ref::<MockDom>();
+    assert_eq!(el.get(), None);
+}
+
+#[test]
+fn node_ref_is_cleared_when_owning_scope_is_disposed() {
+    let dom = MockDom::new();
+    let el = template_ref();
+    let disposer = create_root(|| {
+        El::new(dom.clone(), "div").node_ref(&el).finish();
+    });
+    assert!(el.get().is_some(), "the ref is populated while mounted");
+    disposer.dispose();
+    assert_eq!(el.get(), None, "disposing the scope clears the ref");
+}
 
 #[test]
 fn renders_static_element_with_text() {

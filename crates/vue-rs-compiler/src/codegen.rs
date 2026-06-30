@@ -241,6 +241,12 @@ impl Codegen {
                     let handler = parse_expr(handler)?;
                     fields.push(quote! { #field: ::vue_rs_dom::Callback::new(#handler) });
                 }
+                Attr::Static { name, .. } if name == "ref" => {
+                    return Err(
+                        "template refs on components (the component instance) are not supported"
+                            .to_string(),
+                    );
+                }
                 Attr::Static { name, value } => {
                     let field = Ident::new(name, Span::call_site());
                     fields.push(quote! { #field: #value });
@@ -569,6 +575,14 @@ fn gen_attr(attr: &Attr, base_style: Option<&TokenStream>) -> Result<TokenStream
         Attr::Static { name, value } if name == "v-text" => {
             let expr = parse_expr(value)?;
             Ok(quote! { .dyn_text(move || (#expr).to_string()) })
+        }
+        // `ref="name"` binds the element's node into the `name` template ref
+        // handle (declared as `let name = template_ref();` in the component's
+        // `<script>`). The value names that binding, so it must be an identifier.
+        Attr::Static { name, value } if name == "ref" => {
+            let binding: Ident = syn::parse_str(value)
+                .map_err(|_| format!("`ref` value must be an identifier, got {value:?}"))?;
+            Ok(quote! { .node_ref(&#binding) })
         }
         Attr::Static { name, value } => Ok(quote! { .attr(#name, #value) }),
         Attr::Dyn { name, expr } => {

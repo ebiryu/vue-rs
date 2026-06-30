@@ -6,6 +6,7 @@ use std::rc::Rc;
 use vue_rs_reactive::{batch, create_root_detached, effect, on_cleanup, RootDisposer};
 
 use crate::backend::{Backend, EventOptions};
+use crate::node_ref::TemplateRef;
 
 /// A mounted dynamic branch: its root node plus the disposer for its effects.
 type Branch<B> = (<B as Backend>::Node, RootDisposer);
@@ -112,6 +113,17 @@ impl<B: Backend> El<B> {
         let backend = self.backend.clone();
         let node = self.node.clone();
         effect(move || backend.set_inner_html(&node, f().as_str()));
+        self
+    }
+
+    /// Bind a template ref (the `ref="name"` directive): store this element's
+    /// node in `target` so it can be read after mount. The slot is cleared when
+    /// the enclosing reactive scope is disposed, so a removed element does not
+    /// leave a dangling node behind.
+    pub fn node_ref(self, target: &TemplateRef<B>) -> Self {
+        target.set(Some(self.node.clone()));
+        let slot = target.slot();
+        on_cleanup(move || *slot.borrow_mut() = None);
         self
     }
 

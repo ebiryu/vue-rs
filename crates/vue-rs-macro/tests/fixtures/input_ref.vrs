@@ -1,0 +1,22 @@
+<template>
+  <div>
+    <input ref="field" />
+    <p>{{ status.get() }}</p>
+  </div>
+</template>
+
+<script lang="rust">
+use vue_rs_dom::template_ref;
+use vue_rs_reactive::{signal, on_mounted};
+
+let field = template_ref();
+let status = signal(String::from("no-ref"));
+on_mounted({
+    let field = field.clone();
+    move || {
+        if field.get().is_some() {
+            status.set(String::from("has-ref"));
+        }
+    }
+});
+</script>
