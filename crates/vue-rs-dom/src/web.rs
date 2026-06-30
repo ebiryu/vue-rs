@@ -10,6 +10,51 @@ use crate::backend::{Backend, EventOptions};
 #[derive(Clone, Default)]
 pub struct WebDom;
 
+/// A backend node: either a single real DOM node, or a fragment grouping several
+/// sibling nodes (a template with multiple roots). The DOM has no persistent node
+/// that represents a group of siblings — a `DocumentFragment` empties when
+/// inserted — so a fragment keeps its members in a shared list and applies
+/// append/insert/remove to each, which lets it move and unmount as a unit.
+#[derive(Clone)]
+pub enum WebNode {
+    /// A single real DOM node.
+    Single(web_sys::Node),
+    /// A group of sibling nodes spliced into the parent with no wrapper.
+    Fragment(Rc<RefCell<Vec<WebNode>>>),
+}
+
+impl WebNode {
+    /// The underlying real node, for operations (attributes, listeners, …) that
+    /// only ever target a single element. Panics on a fragment, which those
+    /// operations never receive.
+    fn single(&self) -> &web_sys::Node {
+        match self {
+            WebNode::Single(node) => node,
+            WebNode::Fragment(_) => panic!("expected a single node, found a fragment"),
+        }
+    }
+
+    /// Collect the real DOM nodes this node represents, in order: a single node
+    /// yields itself; a fragment yields its members (recursively).
+    fn collect(&self, out: &mut Vec<web_sys::Node>) {
+        match self {
+            WebNode::Single(node) => out.push(node.clone()),
+            WebNode::Fragment(members) => {
+                for member in members.borrow().iter() {
+                    member.collect(out);
+                }
+            }
+        }
+    }
+
+    /// The real DOM nodes this node represents, in order.
+    fn real_nodes(&self) -> Vec<web_sys::Node> {
+        let mut out = Vec::new();
+        self.collect(&mut out);
+        out
+    }
+}
+
 /// Read the system-modifier state (`[ctrl, alt, shift, meta]`) off an event.
 /// Keyboard and mouse events both carry these flags; other event types report
 /// no modifiers held.
@@ -75,11 +120,13 @@ pub fn install_microtask_scheduler() {
 
 impl WebDom {
     /// Append `node` to the document body, enable microtask-based scheduling, then
-    /// run `on_mounted` callbacks.
-    pub fn mount(&self, node: &web_sys::Node) {
+    /// run `on_mounted` callbacks. A fragment appends each of its members.
+    pub fn mount(&self, node: &WebNode) {
         install_microtask_scheduler();
         let body = document().body().expect("document has no body");
-        body.append_child(node).expect("mount append_child");
+        for real in node.real_nodes() {
+            body.append_child(&real).expect("mount append_child");
+        }
         vue_rs_reactive::flush_mounted();
     }
 
@@ -94,31 +141,38 @@ impl WebDom {
 }
 
 impl Backend for WebDom {
-    type Node = web_sys::Node;
+    type Node = WebNode;
     /// The event name, its capture flag (needed to detach), and the live JS
     /// closure; dropping the closure releases it.
     type Listener = (String, bool, Closure<dyn FnMut(web_sys::Event)>);
 
-    fn create_element(&self, tag: &str) -> web_sys::Node {
-        document()
-            .create_element(tag)
-            .expect("create_element")
-            .unchecked_into()
+    fn create_element(&self, tag: &str) -> WebNode {
+        WebNode::Single(
+            document()
+                .create_element(tag)
+                .expect("create_element")
+                .unchecked_into(),
+        )
     }
 
-    fn create_text(&self, data: &str) -> web_sys::Node {
-        document().create_text_node(data).unchecked_into()
+    fn create_text(&self, data: &str) -> WebNode {
+        WebNode::Single(document().create_text_node(data).unchecked_into())
     }
 
-    fn create_anchor(&self) -> web_sys::Node {
-        document().create_comment("").unchecked_into()
+    fn create_anchor(&self) -> WebNode {
+        WebNode::Single(document().create_comment("").unchecked_into())
     }
 
-    fn set_text(&self, node: &web_sys::Node, data: &str) {
-        node.set_text_content(Some(data));
+    fn create_fragment(&self, children: Vec<WebNode>) -> WebNode {
+        WebNode::Fragment(Rc::new(RefCell::new(children)))
     }
 
-    fn set_attribute(&self, node: &web_sys::Node, name: &str, value: &str) {
+    fn set_text(&self, node: &WebNode, data: &str) {
+        node.single().set_text_content(Some(data));
+    }
+
+    fn set_attribute(&self, node: &WebNode, name: &str, value: &str) {
+        let node = node.single();
         // For inputs, `value` is a live property, not just an attribute — set it
         // so v-model reflects programmatic changes (e.g. clearing after submit).
         if name == "value"
@@ -131,52 +185,62 @@ impl Backend for WebDom {
         element.set_attribute(name, value).expect("set_attribute");
     }
 
-    fn set_property(&self, node: &web_sys::Node, name: &str, value: &str) {
+    fn set_property(&self, node: &WebNode, name: &str, value: &str) {
         // Assign a DOM property (`node[name] = value`) rather than an attribute.
         let _ = js_sys::Reflect::set(
-            node.as_ref(),
+            node.single().as_ref(),
             &JsValue::from_str(name),
             &JsValue::from_str(value),
         );
     }
 
-    fn set_bool_property(&self, node: &web_sys::Node, name: &str, value: bool) {
+    fn set_bool_property(&self, node: &WebNode, name: &str, value: bool) {
         // Assign a boolean DOM property (`node[name] = true`), e.g. a checkbox's
         // `checked`. A string would always be truthy, so set an actual bool.
         let _ = js_sys::Reflect::set(
-            node.as_ref(),
+            node.single().as_ref(),
             &JsValue::from_str(name),
             &JsValue::from_bool(value),
         );
     }
 
-    fn remove_attribute(&self, node: &web_sys::Node, name: &str) {
-        let element: &web_sys::Element = node.unchecked_ref();
+    fn remove_attribute(&self, node: &WebNode, name: &str) {
+        let element: &web_sys::Element = node.single().unchecked_ref();
         element.remove_attribute(name).expect("remove_attribute");
     }
 
-    fn set_inner_html(&self, node: &web_sys::Node, html: &str) {
-        let element: &web_sys::Element = node.unchecked_ref();
+    fn set_inner_html(&self, node: &WebNode, html: &str) {
+        let element: &web_sys::Element = node.single().unchecked_ref();
         element.set_inner_html(html);
     }
 
-    fn append_child(&self, parent: &web_sys::Node, child: &web_sys::Node) {
-        parent.append_child(child).expect("append_child");
+    fn append_child(&self, parent: &WebNode, child: &WebNode) {
+        let parent = parent.single();
+        for real in child.real_nodes() {
+            parent.append_child(&real).expect("append_child");
+        }
     }
 
-    fn insert_before(&self, parent: &web_sys::Node, child: &web_sys::Node, anchor: &web_sys::Node) {
-        parent
-            .insert_before(child, Some(anchor))
-            .expect("insert_before");
+    fn insert_before(&self, parent: &WebNode, child: &WebNode, anchor: &WebNode) {
+        let parent = parent.single();
+        let anchor = anchor.single();
+        for real in child.real_nodes() {
+            parent
+                .insert_before(&real, Some(anchor))
+                .expect("insert_before");
+        }
     }
 
-    fn remove_child(&self, parent: &web_sys::Node, child: &web_sys::Node) {
-        parent.remove_child(child).expect("remove_child");
+    fn remove_child(&self, parent: &WebNode, child: &WebNode) {
+        let parent = parent.single();
+        for real in child.real_nodes() {
+            parent.remove_child(&real).expect("remove_child");
+        }
     }
 
     fn add_event_listener(
         &self,
-        node: &web_sys::Node,
+        node: &WebNode,
         event: &str,
         options: EventOptions,
         handler: Rc<dyn Fn(&str)>,
@@ -220,7 +284,7 @@ impl Backend for WebDom {
             let value = event.target().map(|target| read_value(&target)).unwrap_or_default();
             handler(&value);
         });
-        let target: &web_sys::EventTarget = node.unchecked_ref();
+        let target: &web_sys::EventTarget = node.single().unchecked_ref();
         let listener_options = web_sys::AddEventListenerOptions::new();
         listener_options.set_once(options.once);
         listener_options.set_capture(options.capture);
@@ -237,9 +301,9 @@ impl Backend for WebDom {
         (event.to_string(), options.capture, closure)
     }
 
-    fn remove_event_listener(&self, node: &web_sys::Node, listener: Self::Listener) {
+    fn remove_event_listener(&self, node: &WebNode, listener: Self::Listener) {
         let (event, capture, closure) = listener;
-        let target: &web_sys::EventTarget = node.unchecked_ref();
+        let target: &web_sys::EventTarget = node.single().unchecked_ref();
         target
             .remove_event_listener_with_callback_and_bool(
                 &event,

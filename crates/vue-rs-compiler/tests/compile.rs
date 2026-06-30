@@ -877,8 +877,52 @@ fn error_on_unterminated_comment() {
 }
 
 #[test]
-fn error_on_multiple_root_elements() {
-    assert!(compile_template("<p>a</p><p>b</p>").is_err());
+fn multiple_root_elements_become_a_fragment() {
+    compiles_to(
+        "<h1>Title</h1><p>Body</p>",
+        quote! {
+            ::vue_rs_dom::Backend::create_fragment(
+                &__backend,
+                ::std::vec![
+                    El::new(__backend.clone(), "h1").text("Title").finish(),
+                    El::new(__backend.clone(), "p").text("Body").finish()
+                ],
+            )
+        },
+    );
+}
+
+#[test]
+fn root_fragment_carries_text_and_dynamic_text_members() {
+    compiles_to(
+        "<span>a</span>plain {{ x.get() }}",
+        quote! {
+            ::vue_rs_dom::Backend::create_fragment(
+                &__backend,
+                ::std::vec![
+                    El::new(__backend.clone(), "span").text("a").finish(),
+                    ::vue_rs_dom::Backend::create_text(&__backend, "plain "),
+                    ::vue_rs_dom::dyn_text_node(&__backend, move || (x.get()).to_string())
+                ],
+            )
+        },
+    );
+}
+
+#[test]
+fn single_root_element_does_not_become_a_fragment() {
+    // The common case stays a bare element, with no fragment wrapping.
+    compiles_to(
+        "<p>hi</p>",
+        quote! { El::new(__backend.clone(), "p").text("hi").finish() },
+    );
+}
+
+#[test]
+fn error_on_control_flow_at_template_root() {
+    // Root-level control flow has no element to anchor against.
+    assert!(compile_template(r#"<p v-if="x.get()">a</p><p>b</p>"#).is_err());
+    assert!(compile_template(r#"<li v-for="i in xs" :key="i">{{ i }}</li><p>b</p>"#).is_err());
 }
 
 #[test]

@@ -61,6 +61,13 @@ enum NodeData {
     },
     /// An invisible placeholder used to position dynamic content.
     Anchor,
+    /// Several sibling nodes grouped to mount/move/unmount as a unit, with no
+    /// wrapper element (a template with multiple roots). The fragment node is
+    /// never itself a child of an element: its members are spliced directly into
+    /// the parent (see [`MockDom::real_nodes`]).
+    Fragment {
+        children: Vec<usize>,
+    },
 }
 
 /// Whether the guard modifiers (`.self` / key / mouse-button) pass for a
@@ -110,6 +117,24 @@ impl MockDom {
         nodes.len() - 1
     }
 
+    /// Flatten `node` into the real (non-fragment) nodes it represents, in order.
+    /// A plain node yields itself; a fragment yields its members (recursively),
+    /// so a fragment is spliced into its parent rather than appearing as a child.
+    fn real_nodes(&self, node: usize, out: &mut Vec<usize>) {
+        let children = match &self.nodes.borrow()[node] {
+            NodeData::Fragment { children } => Some(children.clone()),
+            _ => None,
+        };
+        match children {
+            Some(children) => {
+                for child in children {
+                    self.real_nodes(child, out);
+                }
+            }
+            None => out.push(node),
+        }
+    }
+
     /// Serialize the subtree rooted at `node` to an HTML-like string.
     /// Anchors render as nothing, so dynamic positioning stays invisible.
     /// Text content and attribute values are HTML-escaped, matching how the
@@ -118,6 +143,14 @@ impl MockDom {
         let nodes = self.nodes.borrow();
         match &nodes[node] {
             NodeData::Anchor => String::new(),
+            NodeData::Fragment { children } => {
+                // No wrapper: concatenate the members in order.
+                let mut out = String::new();
+                for child in children {
+                    out.push_str(&self.to_html(*child));
+                }
+                out
+            }
             NodeData::Text { data } => escape_text(data),
             NodeData::Element {
                 tag,
@@ -253,6 +286,10 @@ impl Backend for MockDom {
         self.push(NodeData::Anchor)
     }
 
+    fn create_fragment(&self, children: Vec<usize>) -> usize {
+        self.push(NodeData::Fragment { children })
+    }
+
     fn set_text(&self, node: &usize, data: &str) {
         if let NodeData::Text { data: slot } = &mut self.nodes.borrow_mut()[*node] {
             *slot = data.to_string();
@@ -298,23 +335,32 @@ impl Backend for MockDom {
     }
 
     fn append_child(&self, parent: &usize, child: &usize) {
+        let mut reals = Vec::new();
+        self.real_nodes(*child, &mut reals);
         if let NodeData::Element { children, .. } = &mut self.nodes.borrow_mut()[*parent] {
-            children.push(*child);
+            children.extend(reals);
         }
     }
 
     fn insert_before(&self, parent: &usize, child: &usize, anchor: &usize) {
+        let mut reals = Vec::new();
+        self.real_nodes(*child, &mut reals);
         if let NodeData::Element { children, .. } = &mut self.nodes.borrow_mut()[*parent] {
-            // Mirror the DOM: inserting a node already in the tree moves it.
-            children.retain(|c| c != child);
+            // Mirror the DOM: inserting a node already in the tree moves it. A
+            // fragment moves all its members, contiguously, preserving order.
+            children.retain(|c| !reals.contains(c));
             let at = children.iter().position(|c| c == anchor).unwrap_or(children.len());
-            children.insert(at, *child);
+            for (offset, real) in reals.into_iter().enumerate() {
+                children.insert(at + offset, real);
+            }
         }
     }
 
     fn remove_child(&self, parent: &usize, child: &usize) {
+        let mut reals = Vec::new();
+        self.real_nodes(*child, &mut reals);
         if let NodeData::Element { children, .. } = &mut self.nodes.borrow_mut()[*parent] {
-            children.retain(|c| c != child);
+            children.retain(|c| !reals.contains(c));
         }
     }
 

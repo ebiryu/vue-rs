@@ -421,6 +421,18 @@ pub fn switch_views<B: Backend>(_sample: &B) -> Vec<Box<dyn Fn(B) -> B::Node>> {
     Vec::new()
 }
 
+/// Build a standalone reactive text node that re-evaluates whenever its deps
+/// change. Unlike [`El::dyn_text`] (which appends into a parent element), this
+/// returns the text node itself, for use as a fragment member at a template root
+/// where there is no enclosing element.
+pub fn dyn_text_node<B: Backend>(backend: &B, f: impl Fn() -> String + 'static) -> B::Node {
+    let text = backend.create_text("");
+    let node = text.clone();
+    let backend = backend.clone();
+    effect(move || backend.set_text(&node, &f()));
+    text
+}
+
 /// Register a cleanup so the enclosing reactive scope's disposal tears down a
 /// branch that is still mounted. The branch lives in a detached root (so it
 /// survives the control-flow effect's re-runs), which means it is otherwise

@@ -81,6 +81,11 @@ pub trait Backend: Clone + 'static {
     fn create_text(&self, data: &str) -> Self::Node;
     /// Create an empty placeholder used to anchor dynamic content in the tree.
     fn create_anchor(&self) -> Self::Node;
+    /// Group several sibling nodes into one node that mounts, moves, and unmounts
+    /// as a unit, with no wrapper element (a template with multiple roots).
+    /// Appending, inserting, or removing the fragment applies to every member, in
+    /// order. Fragments may nest.
+    fn create_fragment(&self, children: Vec<Self::Node>) -> Self::Node;
     fn set_text(&self, node: &Self::Node, data: &str);
     fn set_attribute(&self, node: &Self::Node, name: &str, value: &str);
     /// Set a DOM property (the `:name.prop` binding), e.g. `node.value = "x"`,

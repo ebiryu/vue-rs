@@ -1,0 +1,11 @@
+<template>
+  <h1>{{ title.get() }}</h1>
+  <button @click="count.set(count.get() + 1)">count is {{ count.get() }}</button>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::signal;
+
+let title = signal(String::from("Hello"));
+let count = signal(0);
+</script>

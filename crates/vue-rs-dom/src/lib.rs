@@ -18,10 +18,10 @@ mod web;
 pub use backend::{Backend, EventOptions};
 pub use callback::Callback;
 pub use class::ClassList;
-pub use element::{switch_views, El, RawHtml};
+pub use element::{dyn_text_node, switch_views, El, RawHtml};
 pub use mock::{DispatchOutcome, MockDom, MockEvent};
 pub use node_ref::{template_ref, TemplateRef};
 pub use slots::SlotFn;
 pub use style::StyleList;
 #[cfg(feature = "web")]
-pub use web::{install_microtask_scheduler, WebDom};
+pub use web::{install_microtask_scheduler, WebDom, WebNode};

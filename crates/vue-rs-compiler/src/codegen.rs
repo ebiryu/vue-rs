@@ -55,18 +55,53 @@ impl Codegen {
         }
     }
 
-    /// Generate the builder expression for a template's single root element.
+    /// Generate the builder expression for a template's root. A single root
+    /// element lowers directly to that element; multiple roots (or root-level
+    /// text) lower to a fragment that mounts, moves, and unmounts as a unit.
     pub(crate) fn root(&self, nodes: &[Node]) -> Result<TokenStream, String> {
-        let mut elements = nodes.iter().filter_map(|n| match n {
-            Node::Element(e) => Some(e),
-            _ => None,
-        });
-        let root = elements.next();
-        let has_extra = elements.next().is_some();
-        let has_text = nodes.iter().any(|n| !matches!(n, Node::Element(_)));
-        match root {
-            Some(root) if !has_extra && !has_text => self.element(root),
-            _ => Err("template must have exactly one root element".to_string()),
+        match nodes {
+            [] => Err("template must not be empty".to_string()),
+            [Node::Element(only)] => self.element(only),
+            _ => {
+                let members = nodes
+                    .iter()
+                    .map(|node| self.root_member(node))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(quote! {
+                    ::vue_rs_dom::Backend::create_fragment(
+                        &__backend,
+                        ::std::vec![ #(#members),* ],
+                    )
+                })
+            }
+        }
+    }
+
+    /// Build one member of a multi-root template as a `B::Node`. Elements and
+    /// components lower as usual; text becomes a (possibly reactive) text node.
+    /// Root-level control flow has no enclosing element to anchor against, so it
+    /// is rejected with a clear message.
+    fn root_member(&self, node: &Node) -> Result<TokenStream, String> {
+        match node {
+            Node::StaticText(text) => {
+                Ok(quote! { ::vue_rs_dom::Backend::create_text(&__backend, #text) })
+            }
+            Node::DynText(expr) => {
+                let expr = parse_expr(expr)?;
+                Ok(quote! {
+                    ::vue_rs_dom::dyn_text_node(&__backend, move || (#expr).to_string())
+                })
+            }
+            Node::Element(el) => {
+                for directive in ["v-if", "v-else-if", "v-else", "v-for"] {
+                    if find_static(el, directive).is_some() {
+                        return Err(format!(
+                            "`{directive}` is not supported at the template root; wrap it in an element"
+                        ));
+                    }
+                }
+                self.element(el)
+            }
         }
     }
 
