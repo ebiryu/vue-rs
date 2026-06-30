@@ -47,6 +47,9 @@ enum NodeData {
     Element {
         tag: String,
         attrs: Vec<(String, String)>,
+        /// DOM properties set via `set_property` (the `:name.prop` binding). Kept
+        /// apart from `attrs`: properties are not serialized into the HTML.
+        props: Vec<(String, String)>,
         children: Vec<usize>,
         listeners: Vec<Listener>,
         /// Raw markup set via `set_inner_html` (the `v-html` directive). When
@@ -143,6 +146,18 @@ impl MockDom {
         }
     }
 
+    /// The value of a DOM property set via `set_property` (the `:name.prop`
+    /// binding) on `node`, if present.
+    pub fn property(&self, node: usize, name: &str) -> Option<String> {
+        let nodes = self.nodes.borrow();
+        match &nodes[node] {
+            NodeData::Element { props, .. } => {
+                props.iter().find(|(n, _)| n == name).map(|(_, v)| v.clone())
+            }
+            _ => None,
+        }
+    }
+
     /// Find the first element node (in creation order) with the given tag.
     pub fn find(&self, tag: &str) -> Option<usize> {
         let nodes = self.nodes.borrow();
@@ -221,6 +236,7 @@ impl Backend for MockDom {
         self.push(NodeData::Element {
             tag: tag.to_string(),
             attrs: Vec::new(),
+            props: Vec::new(),
             children: Vec::new(),
             listeners: Vec::new(),
             inner_html: None,
@@ -249,6 +265,16 @@ impl Backend for MockDom {
                 existing.1 = value.to_string();
             } else {
                 attrs.push((name.to_string(), value.to_string()));
+            }
+        }
+    }
+
+    fn set_property(&self, node: &usize, name: &str, value: &str) {
+        if let NodeData::Element { props, .. } = &mut self.nodes.borrow_mut()[*node] {
+            if let Some(existing) = props.iter_mut().find(|(n, _)| n == name) {
+                existing.1 = value.to_string();
+            } else {
+                props.push((name.to_string(), value.to_string()));
             }
         }
     }

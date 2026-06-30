@@ -576,6 +576,68 @@ fn dynamic_argument_on_component_errors() {
 }
 
 #[test]
+fn bind_prop_modifier_becomes_dyn_prop() {
+    // `:name.prop` sets a DOM *property* (via `set_property`) instead of an
+    // attribute.
+    compiles_to(
+        r#"<input :value.prop="text()" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .dyn_prop("value", move || (text()).to_string())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn bind_attr_modifier_stays_dyn_attr() {
+    // `:name.attr` forces an attribute (the default), spelled explicitly.
+    compiles_to(
+        r#"<div :id.attr="x()"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attr("id", move || (x()).to_string())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn bind_camel_modifier_camelizes_attribute_name() {
+    // `:view-box.camel` camelizes the bound name to `viewBox`.
+    compiles_to(
+        r#"<svg :view-box.camel="vb()"></svg>"#,
+        quote! {
+            El::new(__backend.clone(), "svg")
+                .dyn_attr("viewBox", move || (vb()).to_string())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn bind_camel_and_prop_modifiers_combine() {
+    compiles_to(
+        r#"<x-el :my-prop.camel.prop="v()"></x-el>"#,
+        quote! {
+            El::new(__backend.clone(), "x-el")
+                .dyn_prop("myProp", move || (v()).to_string())
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn bind_unknown_modifier_errors() {
+    assert!(compile_template(r#"<div :id.bogus="x()"></div>"#).is_err());
+}
+
+#[test]
+fn bind_prop_and_attr_modifiers_conflict_errors() {
+    assert!(compile_template(r#"<div :id.prop.attr="x()"></div>"#).is_err());
+}
+
+#[test]
 fn self_closing_element() {
     compiles_to(
         r#"<input :value="v()" />"#,

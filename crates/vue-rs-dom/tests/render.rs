@@ -79,6 +79,23 @@ fn dyn_attr_named_sets_and_renames_attribute() {
 }
 
 #[test]
+fn dyn_prop_sets_property_reactively() {
+    // `:name.prop` sets a DOM property (kept separate from attributes), updating
+    // when its reactive deps change.
+    let dom = MockDom::new();
+    let text = signal("hello".to_string());
+    let node = El::new(dom.clone(), "input")
+        .dyn_prop("value", move || text.get())
+        .finish();
+    assert_eq!(dom.property(node, "value").as_deref(), Some("hello"));
+    // A property is not serialized as an attribute.
+    assert_eq!(dom.to_html(node), "<input></input>");
+
+    text.set("world".to_string());
+    assert_eq!(dom.property(node, "value").as_deref(), Some("world"));
+}
+
+#[test]
 fn on_named_resubscribes_when_event_name_changes() {
     let dom = MockDom::new();
     let event = signal("click".to_string());

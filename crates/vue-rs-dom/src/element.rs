@@ -68,6 +68,16 @@ impl<B: Backend> El<B> {
         self
     }
 
+    /// Set a DOM property that re-evaluates whenever its reactive deps change
+    /// (the `:name.prop` binding), e.g. `node.value`.
+    pub fn dyn_prop(self, name: &str, f: impl Fn() -> String + 'static) -> Self {
+        let backend = self.backend.clone();
+        let node = self.node.clone();
+        let name = name.to_string();
+        effect(move || backend.set_property(&node, &name, &f()));
+        self
+    }
+
     /// Set an attribute whose *name* is also reactive (the `:[key]` dynamic
     /// argument). Both the name and value re-evaluate when their deps change;
     /// when the name changes, the previously-set attribute is removed first so a

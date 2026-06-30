@@ -585,8 +585,31 @@ fn gen_attr(attr: &Attr, base_style: Option<&TokenStream>) -> Result<TokenStream
                     .dyn_attr_named(move || (#arg).to_string(), move || (#value).to_string())
                 });
             }
+            // `:name.modifiers` refine the binding: `.prop` sets a DOM property
+            // instead of an attribute, `.attr` forces an attribute (the default,
+            // spelled explicitly), and `.camel` camelizes the bound name.
+            let (base, modifiers) = split_modifiers(name);
+            let mut prop = false;
+            let mut force_attr = false;
+            let mut camel = false;
+            for m in modifiers {
+                match m {
+                    "prop" => prop = true,
+                    "attr" => force_attr = true,
+                    "camel" => camel = true,
+                    other => return Err(format!("unknown bind modifier `.{other}` on `:{name}`")),
+                }
+            }
+            if prop && force_attr {
+                return Err(format!("`:{name}` cannot be both `.prop` and `.attr`"));
+            }
+            let bound = if camel { camelize(base) } else { base.to_string() };
             let expr = parse_expr(expr)?;
-            Ok(quote! { .dyn_attr(#name, move || (#expr).to_string()) })
+            if prop {
+                Ok(quote! { .dyn_prop(#bound, move || (#expr).to_string()) })
+            } else {
+                Ok(quote! { .dyn_attr(#bound, move || (#expr).to_string()) })
+            }
         }
         Attr::Event { name, handler } => {
             // A dynamic argument `@[arg]` computes the event name at runtime.
@@ -1009,6 +1032,32 @@ fn dynamic_arg(name: &str) -> Option<(&str, &str)> {
     let rest = name.strip_prefix('[')?;
     let end = rest.find(']')?;
     Some((rest[..end].trim(), &rest[end + 1..]))
+}
+
+/// Split a bound attribute name into its base name and `.`-separated modifiers
+/// (`value.prop` → `("value", ["prop"])`).
+fn split_modifiers(name: &str) -> (&str, Vec<&str>) {
+    let mut parts = name.split('.');
+    let base = parts.next().unwrap_or("");
+    (base, parts.collect())
+}
+
+/// Camelize a kebab-case bound name (`view-box` → `viewBox`), for the `.camel`
+/// modifier.
+fn camelize(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut upper_next = false;
+    for c in name.chars() {
+        if c == '-' {
+            upper_next = true;
+        } else if upper_next {
+            out.extend(c.to_uppercase());
+            upper_next = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn is_structural(attr: &Attr) -> bool {

@@ -83,6 +83,9 @@ pub trait Backend: Clone + 'static {
     fn create_anchor(&self) -> Self::Node;
     fn set_text(&self, node: &Self::Node, data: &str);
     fn set_attribute(&self, node: &Self::Node, name: &str, value: &str);
+    /// Set a DOM property (the `:name.prop` binding), e.g. `node.value = "x"`,
+    /// rather than an attribute.
+    fn set_property(&self, node: &Self::Node, name: &str, value: &str);
     /// Remove a previously-set attribute. Used when a dynamic attribute argument
     /// (`:[key]`) changes its name, so the old attribute does not linger.
     fn remove_attribute(&self, node: &Self::Node, name: &str);

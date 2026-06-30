@@ -112,6 +112,15 @@ impl Backend for WebDom {
         element.set_attribute(name, value).expect("set_attribute");
     }
 
+    fn set_property(&self, node: &web_sys::Node, name: &str, value: &str) {
+        // Assign a DOM property (`node[name] = value`) rather than an attribute.
+        let _ = js_sys::Reflect::set(
+            node.as_ref(),
+            &JsValue::from_str(name),
+            &JsValue::from_str(value),
+        );
+    }
+
     fn remove_attribute(&self, node: &web_sys::Node, name: &str) {
         let element: &web_sys::Element = node.unchecked_ref();
         element.remove_attribute(name).expect("remove_attribute");

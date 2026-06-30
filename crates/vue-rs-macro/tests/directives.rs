@@ -133,6 +133,16 @@ fn dynamic_attribute_argument_binds_reactive_name() {
 }
 
 #[test]
+fn bind_prop_modifier_sets_dom_property_reactively() {
+    let dom = MockDom::new();
+    let text = signal("a".to_string());
+    let node = view!(dom.clone(), r#"<input :value.prop="text.get()" />"#);
+    assert_eq!(dom.property(node, "value").as_deref(), Some("a"));
+    text.set("b".to_string());
+    assert_eq!(dom.property(node, "value").as_deref(), Some("b"));
+}
+
+#[test]
 fn dynamic_event_argument_binds_reactive_name() {
     let dom = MockDom::new();
     let event = signal("click".to_string());
