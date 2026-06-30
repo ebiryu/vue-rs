@@ -575,6 +575,67 @@ fn v_model_on_checkbox_rejects_modifiers() {
 }
 
 #[test]
+fn v_model_on_textarea_binds_value_property() {
+    // A `<textarea>` has no `value` attribute (its content is its children), so
+    // `v-model` drives the `value` DOM property instead and syncs on `input`.
+    compiles_to(
+        r#"<textarea v-model="text"></textarea>"#,
+        quote! {
+            El::new(__backend.clone(), "textarea")
+                .dyn_prop("value", move || ((text).get()).to_string())
+                .on_value("input", move |__value| (text).set(__value.to_string()))
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_model_on_textarea_honors_modifiers() {
+    compiles_to(
+        r#"<textarea v-model.trim="text"></textarea>"#,
+        quote! {
+            El::new(__backend.clone(), "textarea")
+                .dyn_prop("value", move || ((text).get()).to_string())
+                .on_value("input", move |__value| (text).set(__value.trim().to_string()))
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_model_on_select_binds_value_property_and_syncs_on_change() {
+    // A `<select>` has no `value` attribute either; `v-model` drives the `value`
+    // DOM property and syncs on `change` (a selection is committed, not typed).
+    compiles_to(
+        r#"<select v-model="choice"></select>"#,
+        quote! {
+            El::new(__backend.clone(), "select")
+                .dyn_prop("value", move || ((choice).get()).to_string())
+                .on_value("change", move |__value| (choice).set(__value.to_string()))
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_model_on_select_number_modifier_parses_the_value() {
+    compiles_to(
+        r#"<select v-model.number="choice"></select>"#,
+        quote! {
+            El::new(__backend.clone(), "select")
+                .dyn_prop("value", move || ((choice).get()).to_string())
+                .on_value("change", move |__value| (choice).set(
+                    match __value.parse() {
+                        ::core::result::Result::Ok(__n) => __n,
+                        ::core::result::Result::Err(_) => (choice).get(),
+                    }
+                ))
+                .finish()
+        },
+    );
+}
+
+#[test]
 fn bound_attribute_value_keeps_escaped_quotes() {
     // A backslash-escaped quote inside the attribute value embeds the delimiter
     // quote into the Rust expression instead of terminating the value early.

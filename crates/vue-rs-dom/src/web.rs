@@ -23,6 +23,25 @@ fn modifier_states(event: &web_sys::Event) -> [bool; 4] {
     }
 }
 
+/// Read the value an event's target carries back to a `v-model`. A checkbox
+/// syncs its boolean `checked` state (sent as `"true"`/`"false"`); a text input,
+/// `<textarea>`, or `<select>` syncs its text `value`. Other targets carry none.
+fn read_value(target: &web_sys::EventTarget) -> String {
+    if let Some(input) = target.dyn_ref::<web_sys::HtmlInputElement>() {
+        if input.type_() == "checkbox" {
+            input.checked().to_string()
+        } else {
+            input.value()
+        }
+    } else if let Some(textarea) = target.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+        textarea.value()
+    } else if let Some(select) = target.dyn_ref::<web_sys::HtmlSelectElement>() {
+        select.value()
+    } else {
+        String::new()
+    }
+}
+
 fn document() -> web_sys::Document {
     web_sys::window()
         .expect("no window")
@@ -198,20 +217,7 @@ impl Backend for WebDom {
             if options.stop_propagation {
                 event.stop_propagation();
             }
-            let value = event
-                .target()
-                .and_then(|target| target.dyn_into::<web_sys::HtmlInputElement>().ok())
-                .map(|input| {
-                    // A checkbox's `v-model` syncs its boolean `checked` state
-                    // (sent as `"true"`/`"false"`); every other input syncs its
-                    // text `value`.
-                    if input.type_() == "checkbox" {
-                        input.checked().to_string()
-                    } else {
-                        input.value()
-                    }
-                })
-                .unwrap_or_default();
+            let value = event.target().map(|target| read_value(&target)).unwrap_or_default();
             handler(&value);
         });
         let target: &web_sys::EventTarget = node.unchecked_ref();

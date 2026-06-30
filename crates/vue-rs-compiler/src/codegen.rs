@@ -209,7 +209,7 @@ impl Codegen {
                 }
                 continue;
             }
-            let part = gen_attr(attr, base_style.as_ref(), input_type)?;
+            let part = gen_attr(attr, base_style.as_ref(), &el.tag, input_type)?;
             chain = quote! { #chain #part };
         }
         // `v-html` and `v-text` own the element's content, so any template
@@ -506,6 +506,7 @@ fn slot_directive(el: &Element) -> Option<(&str, &str)> {
 fn gen_attr(
     attr: &Attr,
     base_style: Option<&TokenStream>,
+    tag: &str,
     input_type: Option<&str>,
 ) -> Result<TokenStream, String> {
     match attr {
@@ -542,7 +543,12 @@ fn gen_attr(
                     }
                 }
             }
-            let event = if lazy { "change" } else { "input" };
+            // `<textarea>` and `<select>` have no `value` content attribute, so
+            // their `v-model` drives the `value` DOM property. A `<select>` commits
+            // a choice rather than streaming keystrokes, so it syncs on `change`.
+            let is_textarea = tag == "textarea";
+            let is_select = tag == "select";
+            let event = if lazy || is_select { "change" } else { "input" };
             let text = if trim {
                 quote! { __value.trim() }
             } else {
@@ -558,8 +564,13 @@ fn gen_attr(
             } else {
                 quote! { #text.to_string() }
             };
+            let bind = if is_textarea || is_select {
+                quote! { .dyn_prop("value", move || ((#model).get()).to_string()) }
+            } else {
+                quote! { .dyn_attr("value", move || ((#model).get()).to_string()) }
+            };
             Ok(quote! {
-                .dyn_attr("value", move || ((#model).get()).to_string())
+                #bind
                 .on_value(#event, move |__value| (#model).set(#set_arg))
             })
         }

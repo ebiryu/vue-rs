@@ -558,6 +558,55 @@ fn v_model_number_parses_into_numeric_model() {
 }
 
 #[test]
+fn v_model_textarea_binds_value_property() {
+    let dom = MockDom::new();
+    let text = signal(String::from("hi"));
+
+    let node = view!(dom.clone(), r#"<textarea v-model="text"></textarea>"#);
+
+    // A textarea has no `value` attribute; the model drives the `value` property.
+    assert_eq!(dom.property(node, "value").as_deref(), Some("hi"));
+
+    // Typing fires `input` carrying the new value.
+    dom.dispatch_value(node, "input", "edited");
+    assert_eq!(text.get(), "edited");
+    assert_eq!(dom.property(node, "value").as_deref(), Some("edited"));
+
+    // Programmatic model change reflects back into the property.
+    text.set(String::from("reset"));
+    assert_eq!(dom.property(node, "value").as_deref(), Some("reset"));
+}
+
+#[test]
+fn v_model_select_syncs_on_change() {
+    let dom = MockDom::new();
+    let choice = signal(String::from("a"));
+
+    let node = view!(dom.clone(), r#"<select v-model="choice"></select>"#);
+
+    assert_eq!(dom.property(node, "value").as_deref(), Some("a"));
+
+    // A selection commits via `change`, not `input`.
+    dom.dispatch_value(node, "input", "ignored");
+    assert_eq!(choice.get(), "a");
+
+    dom.dispatch_value(node, "change", "b");
+    assert_eq!(choice.get(), "b");
+    assert_eq!(dom.property(node, "value").as_deref(), Some("b"));
+}
+
+#[test]
+fn v_model_select_number_parses_into_numeric_model() {
+    let dom = MockDom::new();
+    let choice = signal(1_i32);
+
+    let node = view!(dom.clone(), r#"<select v-model.number="choice"></select>"#);
+
+    dom.dispatch_value(node, "change", "3");
+    assert_eq!(choice.get(), 3);
+}
+
+#[test]
 fn v_html_renders_raw_markup_reactively() {
     let dom = MockDom::new();
     let body = signal(String::from("<b>bold</b>"));
