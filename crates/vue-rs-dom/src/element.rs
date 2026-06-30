@@ -79,6 +79,17 @@ impl<B: Backend> El<B> {
         self
     }
 
+    /// Set a boolean DOM property that re-evaluates whenever its reactive deps
+    /// change, e.g. a checkbox's `checked` (the `v-model` binding on
+    /// `<input type="checkbox">`).
+    pub fn dyn_bool_prop(self, name: &str, f: impl Fn() -> bool + 'static) -> Self {
+        let backend = self.backend.clone();
+        let node = self.node.clone();
+        let name = name.to_string();
+        effect(move || backend.set_bool_property(&node, &name, f()));
+        self
+    }
+
     /// Set an attribute whose *name* is also reactive (the `:[key]` dynamic
     /// argument). Both the name and value re-evaluate when their deps change;
     /// when the name changes, the previously-set attribute is removed first so a

@@ -556,6 +556,25 @@ fn v_model_unknown_modifier_errors() {
 }
 
 #[test]
+fn v_model_on_checkbox_binds_checked_property() {
+    compiles_to(
+        r#"<input type="checkbox" v-model="done" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .attr("type", "checkbox")
+                .dyn_bool_prop("checked", move || (done).get())
+                .on_value("change", move |__value| (done).set(__value == "true"))
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_model_on_checkbox_rejects_modifiers() {
+    assert!(compile_template(r#"<input type="checkbox" v-model.number="done" />"#).is_err());
+}
+
+#[test]
 fn bound_attribute_value_keeps_escaped_quotes() {
     // A backslash-escaped quote inside the attribute value embeds the delimiter
     // quote into the Rust expression instead of terminating the value early.

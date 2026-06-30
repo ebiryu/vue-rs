@@ -86,6 +86,10 @@ pub trait Backend: Clone + 'static {
     /// Set a DOM property (the `:name.prop` binding), e.g. `node.value = "x"`,
     /// rather than an attribute.
     fn set_property(&self, node: &Self::Node, name: &str, value: &str);
+    /// Set a boolean DOM property, e.g. a checkbox's `node.checked = true` (the
+    /// `v-model` binding on `<input type="checkbox">`). A boolean cannot go through
+    /// [`Backend::set_property`] because a non-empty string is always truthy.
+    fn set_bool_property(&self, node: &Self::Node, name: &str, value: bool);
     /// Remove a previously-set attribute. Used when a dynamic attribute argument
     /// (`:[key]`) changes its name, so the old attribute does not linger.
     fn remove_attribute(&self, node: &Self::Node, name: &str);

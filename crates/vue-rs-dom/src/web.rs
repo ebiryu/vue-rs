@@ -121,6 +121,16 @@ impl Backend for WebDom {
         );
     }
 
+    fn set_bool_property(&self, node: &web_sys::Node, name: &str, value: bool) {
+        // Assign a boolean DOM property (`node[name] = true`), e.g. a checkbox's
+        // `checked`. A string would always be truthy, so set an actual bool.
+        let _ = js_sys::Reflect::set(
+            node.as_ref(),
+            &JsValue::from_str(name),
+            &JsValue::from_bool(value),
+        );
+    }
+
     fn remove_attribute(&self, node: &web_sys::Node, name: &str) {
         let element: &web_sys::Element = node.unchecked_ref();
         element.remove_attribute(name).expect("remove_attribute");
@@ -191,7 +201,16 @@ impl Backend for WebDom {
             let value = event
                 .target()
                 .and_then(|target| target.dyn_into::<web_sys::HtmlInputElement>().ok())
-                .map(|input| input.value())
+                .map(|input| {
+                    // A checkbox's `v-model` syncs its boolean `checked` state
+                    // (sent as `"true"`/`"false"`); every other input syncs its
+                    // text `value`.
+                    if input.type_() == "checkbox" {
+                        input.checked().to_string()
+                    } else {
+                        input.value()
+                    }
+                })
                 .unwrap_or_default();
             handler(&value);
         });

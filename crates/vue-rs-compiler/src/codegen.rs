@@ -174,6 +174,14 @@ impl Codegen {
                 _ => None,
             }
         };
+        // `v-model` lowers differently per input kind. A static `type` (the only
+        // form we can resolve at compile time) tells a checkbox apart from a text
+        // input.
+        let input_type = if el.tag == "input" {
+            find_static(el, "type")
+        } else {
+            None
+        };
         let mut class_emitted = false;
         let mut style_emitted = false;
         for attr in &el.attrs {
@@ -201,7 +209,7 @@ impl Codegen {
                 }
                 continue;
             }
-            let part = gen_attr(attr, base_style.as_ref())?;
+            let part = gen_attr(attr, base_style.as_ref(), input_type)?;
             chain = quote! { #chain #part };
         }
         // `v-html` and `v-text` own the element's content, so any template
@@ -495,10 +503,28 @@ fn slot_directive(el: &Element) -> Option<(&str, &str)> {
     })
 }
 
-fn gen_attr(attr: &Attr, base_style: Option<&TokenStream>) -> Result<TokenStream, String> {
+fn gen_attr(
+    attr: &Attr,
+    base_style: Option<&TokenStream>,
+    input_type: Option<&str>,
+) -> Result<TokenStream, String> {
     match attr {
         Attr::Static { name, value } if name == "v-model" || name.starts_with("v-model.") => {
             let model = parse_expr(value)?;
+            // On `<input type="checkbox">`, `v-model` binds the boolean `checked`
+            // property: the model drives `checked`, and a `change` carries the new
+            // state back (`"true"`/`"false"`). The text modifiers do not apply.
+            if input_type == Some("checkbox") {
+                if let Some(modifier) = name.split('.').nth(1) {
+                    return Err(format!(
+                        "v-model modifier `.{modifier}` is not supported on a checkbox"
+                    ));
+                }
+                return Ok(quote! {
+                    .dyn_bool_prop("checked", move || (#model).get())
+                    .on_value("change", move |__value| (#model).set(__value == "true"))
+                });
+            }
             // Modifiers refine the binding: `.lazy` syncs on `change` instead of
             // `input`; `.trim` strips surrounding whitespace; `.number` parses the
             // value into the model's type, keeping the current value when the input

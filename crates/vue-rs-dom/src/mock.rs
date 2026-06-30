@@ -279,6 +279,12 @@ impl Backend for MockDom {
         }
     }
 
+    fn set_bool_property(&self, node: &usize, name: &str, value: bool) {
+        // Stored as the bool's `"true"`/`"false"` text alongside other properties,
+        // so `MockDom::property` reads it back uniformly.
+        self.set_property(node, name, if value { "true" } else { "false" });
+    }
+
     fn remove_attribute(&self, node: &usize, name: &str) {
         if let NodeData::Element { attrs, .. } = &mut self.nodes.borrow_mut()[*node] {
             attrs.retain(|(n, _)| n != name);

@@ -122,6 +122,23 @@ fn dyn_prop_sets_property_reactively() {
 }
 
 #[test]
+fn dyn_bool_prop_sets_boolean_property_reactively() {
+    // `dyn_bool_prop` drives a boolean DOM property (e.g. a checkbox's `checked`)
+    // from a reactive source, kept separate from attributes.
+    let dom = MockDom::new();
+    let on = signal(true);
+    let node = El::new(dom.clone(), "input")
+        .dyn_bool_prop("checked", move || on.get())
+        .finish();
+    assert_eq!(dom.property(node, "checked").as_deref(), Some("true"));
+    // A property is not serialized as an attribute.
+    assert_eq!(dom.to_html(node), "<input></input>");
+
+    on.set(false);
+    assert_eq!(dom.property(node, "checked").as_deref(), Some("false"));
+}
+
+#[test]
 fn on_named_resubscribes_when_event_name_changes() {
     let dom = MockDom::new();
     let event = signal("click".to_string());

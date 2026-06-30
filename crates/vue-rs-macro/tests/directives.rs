@@ -493,6 +493,29 @@ fn v_model_two_way_binding() {
 }
 
 #[test]
+fn v_model_checkbox_binds_boolean() {
+    let dom = MockDom::new();
+    let done = signal(false);
+
+    let node = view!(
+        dom.clone(),
+        r#"<input type="checkbox" v-model="done" />"#
+    );
+
+    // The model drives the `checked` property (not a serialized attribute).
+    assert_eq!(dom.property(node, "checked").as_deref(), Some("false"));
+
+    // Checking the box fires `change` carrying the new checked state.
+    dom.dispatch_value(node, "change", "true");
+    assert!(done.get());
+    assert_eq!(dom.property(node, "checked").as_deref(), Some("true"));
+
+    // Programmatic model change reflects back into the property.
+    done.set(false);
+    assert_eq!(dom.property(node, "checked").as_deref(), Some("false"));
+}
+
+#[test]
 fn v_model_lazy_syncs_on_change_not_input() {
     let dom = MockDom::new();
     let text = signal(String::from("hi"));
