@@ -1,0 +1,17 @@
+<template>
+  <button @click="bump()">{{ title.get().to_string() }}</button>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::ReadSignal;
+use vue_rs_dom::Callback;
+
+pub struct NamedFieldProps {
+    pub title: ReadSignal<i32>,
+    pub on_update_title: Callback<i32>,
+}
+
+let title = props.title;
+let on_update = props.on_update_title.clone();
+let bump = move || on_update.call(title.get() + 1);
+</script>

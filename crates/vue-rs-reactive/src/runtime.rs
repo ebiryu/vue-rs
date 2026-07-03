@@ -1013,6 +1013,76 @@ impl<T: 'static> Memo<T> {
     }
 }
 
+/// A read-only view of a reactive value. Vue's `readonly(ref)`: it reads (with
+/// dependency tracking) like a [`Signal`] but exposes no `set`, so a holder can
+/// observe changes without mutating the source. Props flow down as `ReadSignal`
+/// so children get one-way data (writes go back up through emits).
+pub struct ReadSignal<T> {
+    id: NodeId,
+    _t: PhantomData<T>,
+}
+
+impl<T> Clone for ReadSignal<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for ReadSignal<T> {}
+
+impl<T> PartialEq for ReadSignal<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl<T> Eq for ReadSignal<T> {}
+
+impl<T: 'static> ReadSignal<T> {
+    /// Read with dependency tracking, cloning out the value.
+    pub fn get(self) -> T
+    where
+        T: Clone,
+    {
+        self.with(|v| v.clone())
+    }
+
+    /// Read with dependency tracking, without requiring `Clone`.
+    pub fn with<R>(self, f: impl FnOnce(&T) -> R) -> R {
+        read_with::<T, R>(self.id, f)
+    }
+}
+
+impl<T: 'static> Signal<T> {
+    /// A read-only view of this signal (same node, no `set`).
+    pub fn read_only(self) -> ReadSignal<T> {
+        ReadSignal {
+            id: self.id,
+            _t: PhantomData,
+        }
+    }
+}
+
+impl<T: 'static> Memo<T> {
+    /// A read-only view of this memo (same node).
+    pub fn read_only(self) -> ReadSignal<T> {
+        ReadSignal {
+            id: self.id,
+            _t: PhantomData,
+        }
+    }
+}
+
+impl<T: 'static> From<Signal<T>> for ReadSignal<T> {
+    fn from(signal: Signal<T>) -> Self {
+        signal.read_only()
+    }
+}
+
+impl<T: 'static> From<Memo<T>> for ReadSignal<T> {
+    fn from(memo: Memo<T>) -> Self {
+        memo.read_only()
+    }
+}
+
 /// A writable derived value. Vue's `computed({ get, set })`: it reads like a
 /// [`Memo`] (memoized, dependency-tracked, `PartialEq`-deduped) and, when set,
 /// runs a setter that typically writes back to upstream signals.

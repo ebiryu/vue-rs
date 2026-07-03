@@ -9,10 +9,12 @@ use std::fmt;
 
 mod codegen;
 mod parser;
+mod props;
 mod script;
 mod sfc;
 mod style;
 
+pub use props::check_prop_fields;
 pub use script::rewrite_script_sugar;
 pub use sfc::{split_sfc, Sfc};
 pub use style::{scope_css, scope_id};

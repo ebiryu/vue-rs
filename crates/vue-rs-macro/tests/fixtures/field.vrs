@@ -1,0 +1,17 @@
+<template>
+  <button @click="bump()">{{ model_value.get().to_string() }}</button>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::ReadSignal;
+use vue_rs_dom::Callback;
+
+pub struct FieldProps {
+    pub model_value: ReadSignal<i32>,
+    pub on_update_model_value: Callback<i32>,
+}
+
+let model_value = props.model_value;
+let on_update = props.on_update_model_value.clone();
+let bump = move || on_update.call(model_value.get() + 1);
+</script>

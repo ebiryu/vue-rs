@@ -277,12 +277,30 @@ impl Codegen {
                 Attr::Dyn { name, expr } => {
                     let field = Ident::new(name, Span::call_site());
                     let expr = parse_expr(expr)?;
-                    fields.push(quote! { #field: #expr });
+                    // Reactive props flow down read-only: `Into` converts a
+                    // `Signal`/`Memo` to the child's `ReadSignal` field (and is
+                    // the identity for plain values, whose target type is fixed
+                    // by the struct field).
+                    fields.push(quote! { #field: ::core::convert::Into::into(#expr) });
                 }
                 Attr::Event { name, handler } => {
                     let field = Ident::new(&format!("on_{name}"), Span::call_site());
                     let handler = parse_expr(handler)?;
                     fields.push(quote! { #field: ::vue_rs_dom::Callback::new(#handler) });
+                }
+                Attr::Static { name, value } if is_component_v_model(name) => {
+                    // A component `v-model[:arg]` lowers to prop-down / emit-up:
+                    // the value flows down read-only under `model_<arg>` (default
+                    // arg `value`), and updates flow up through an
+                    // `on_update_model_<arg>` callback that writes the source. The
+                    // source expression must therefore be a writable handle
+                    // (`Signal`/`WritableMemo`), like an element `v-model`.
+                    let (value_field, update_field) = component_model_fields(name)?;
+                    let expr = parse_expr(value)?;
+                    fields.push(quote! { #value_field: ::core::convert::Into::into(#expr) });
+                    fields.push(quote! {
+                        #update_field: ::vue_rs_dom::Callback::new(move |__v| (#expr).set(__v))
+                    });
                 }
                 Attr::Static { name, .. } if name == "ref" => {
                     return Err(
@@ -527,6 +545,40 @@ fn parse_index_binding(binding: &str) -> Result<Option<(TokenStream, TokenStream
 
 fn is_component(tag: &str) -> bool {
     tag.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+}
+
+/// Whether an attribute name is a component `v-model` (bare, `:arg`, or with
+/// modifiers).
+fn is_component_v_model(name: &str) -> bool {
+    name == "v-model" || name.starts_with("v-model:") || name.starts_with("v-model.")
+}
+
+/// The prop and emit fields a component `v-model[:arg]` binds: the value prop
+/// (`model_value` by default, `model_<arg>` for `v-model:arg`) and the matching
+/// `on_update_<...>` callback. Modifiers are rejected (not yet supported).
+fn component_model_fields(name: &str) -> Result<(Ident, Ident), String> {
+    let rest = name.strip_prefix("v-model").expect("checked by caller");
+    // Split off any `.modifiers`; the leading part is `""` or `:arg`.
+    let (arg_part, modifiers) = match rest.split_once('.') {
+        Some((arg, mods)) => (arg, Some(mods)),
+        None => (rest, None),
+    };
+    if modifiers.is_some() {
+        return Err(format!(
+            "modifiers on a component `v-model` are not supported (`{name}`)"
+        ));
+    }
+    // Default (no arg) binds the conventional `model_value` prop; `v-model:arg`
+    // binds `arg` directly (Vue's `modelValue` vs. named-model naming). The emit
+    // is `on_update_<prop>` either way.
+    let prop = match arg_part.strip_prefix(':') {
+        None => "model_value".to_string(),
+        Some("") => return Err("a component `v-model:` argument must not be empty".to_string()),
+        Some(arg) => arg.to_string(),
+    };
+    let value_field = Ident::new(&prop, Span::call_site());
+    let update_field = Ident::new(&format!("on_update_{prop}"), Span::call_site());
+    Ok((value_field, update_field))
 }
 
 /// The slot name and binding pattern from a `<template v-slot:name="pat">`

@@ -3,11 +3,11 @@
 </template>
 
 <script lang="rust">
-use vue_rs_reactive::Signal;
+use vue_rs_reactive::ReadSignal;
 use vue_rs_dom::Callback;
 
 pub struct GreeterProps {
-    pub label: Signal<String>,
+    pub label: ReadSignal<String>,
     pub on_total: Callback<i32>,
 }
 

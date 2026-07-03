@@ -94,6 +94,13 @@ pub fn component(input: TokenStream) -> TokenStream {
         }
     }
 
+    // Props are read-only: reject a declared props field whose type is a
+    // writable handle (`Signal`/`WritableMemo`), so a child cannot mutate parent
+    // state through a prop. Updates flow back up through emits.
+    if let Some(Err(err)) = props_struct.as_ref().map(vue_rs_compiler::check_prop_fields) {
+        return compile_error(&err.to_string());
+    }
+
     // The declared `NameSlots` struct (if any) maps each scoped slot name to its
     // payload type; plain slots have no entry (their payload is `()`).
     let scoped_slots = slots_struct.as_ref().map(slot_fields).unwrap_or_default();

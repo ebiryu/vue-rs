@@ -809,7 +809,7 @@ fn component_with_props_and_event() {
             Child(
                 __backend.clone(),
                 ChildProps {
-                    value: count,
+                    value: ::core::convert::Into::into(count),
                     on_change: ::vue_rs_dom::Callback::new(handler)
                 },
                 ChildSlots::for_backend(&__backend)
@@ -826,12 +826,75 @@ fn component_nested_in_element() {
             El::new(__backend.clone(), "div")
                 .child(Child(
                     __backend.clone(),
-                    ChildProps { x: y },
+                    ChildProps { x: ::core::convert::Into::into(y) },
                     ChildSlots::for_backend(&__backend)
                 ))
                 .finish()
         },
     );
+}
+
+#[test]
+fn v_model_on_component_becomes_prop_down_and_emit_up() {
+    // A component `v-model` lowers to a read-only `model_value` prop (value down)
+    // plus an `on_update_model_value` callback that writes the source (up).
+    compiles_to(
+        r#"<Child v-model="name" />"#,
+        quote! {
+            Child(
+                __backend.clone(),
+                ChildProps {
+                    model_value: ::core::convert::Into::into(name),
+                    on_update_model_value: ::vue_rs_dom::Callback::new(move |__v| (name).set(__v))
+                },
+                ChildSlots::for_backend(&__backend)
+            )
+        },
+    );
+}
+
+#[test]
+fn v_model_arg_on_component_becomes_named_model_prop() {
+    // `v-model:arg` binds the prop `arg` directly with an `on_update_<arg>` callback.
+    compiles_to(
+        r#"<Child v-model:title="heading" />"#,
+        quote! {
+            Child(
+                __backend.clone(),
+                ChildProps {
+                    title: ::core::convert::Into::into(heading),
+                    on_update_title: ::vue_rs_dom::Callback::new(move |__v| (heading).set(__v))
+                },
+                ChildSlots::for_backend(&__backend)
+            )
+        },
+    );
+}
+
+#[test]
+fn v_model_on_component_coexists_with_other_props() {
+    compiles_to(
+        r#"<Child :value="count" v-model="name" />"#,
+        quote! {
+            Child(
+                __backend.clone(),
+                ChildProps {
+                    value: ::core::convert::Into::into(count),
+                    model_value: ::core::convert::Into::into(name),
+                    on_update_model_value: ::vue_rs_dom::Callback::new(move |__v| (name).set(__v))
+                },
+                ChildSlots::for_backend(&__backend)
+            )
+        },
+    );
+}
+
+#[test]
+fn v_model_on_component_with_modifier_errors() {
+    let err = compile_template(r#"<Child v-model.number="n" />"#)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("modifier"), "unexpected error: {err}");
 }
 
 #[test]
