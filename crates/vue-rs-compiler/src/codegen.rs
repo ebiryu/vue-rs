@@ -293,12 +293,12 @@ impl Codegen {
                     // `Signal`/`Memo` to the child's `ReadSignal` field (and is
                     // the identity for plain values, whose target type is fixed
                     // by the struct field).
-                    fields.push(quote! { #field: ::core::convert::Into::into(#expr) });
+                    fields.push(quote! { .#field(::core::convert::Into::into(#expr)) });
                 }
                 Attr::Event { name, handler } => {
                     let field = Ident::new(&format!("on_{name}"), Span::call_site());
                     let handler = parse_expr(handler)?;
-                    fields.push(quote! { #field: ::vue_rs_dom::Callback::new(#handler) });
+                    fields.push(quote! { .#field(::vue_rs_dom::Callback::new(#handler)) });
                 }
                 Attr::Static { name, value } if is_component_v_model(name) => {
                     // A component `v-model[:arg]` lowers to prop-down / emit-up:
@@ -309,9 +309,9 @@ impl Codegen {
                     // (`Signal`/`WritableMemo`), like an element `v-model`.
                     let (value_field, update_field) = component_model_fields(name)?;
                     let expr = parse_expr(value)?;
-                    fields.push(quote! { #value_field: ::core::convert::Into::into(#expr) });
+                    fields.push(quote! { .#value_field(::core::convert::Into::into(#expr)) });
                     fields.push(quote! {
-                        #update_field: ::vue_rs_dom::Callback::new(move |__v| (#expr).set(__v))
+                        .#update_field(::vue_rs_dom::Callback::new(move |__v| (#expr).set(__v)))
                     });
                 }
                 Attr::Static { name, .. } if name == "ref" => {
@@ -322,7 +322,7 @@ impl Codegen {
                 }
                 Attr::Static { name, value } => {
                     let field = Ident::new(name, Span::call_site());
-                    fields.push(quote! { #field: #value });
+                    fields.push(quote! { .#field(#value) });
                 }
             }
         }
@@ -367,8 +367,11 @@ impl Codegen {
 
         let mut args = vec![quote! { __backend.clone() }];
         if !fields.is_empty() {
+            // Props flow in through the generated typestate builder: each `.name(v)`
+            // sets a prop by name, and `.build()` compiles only when every required
+            // prop was set (optional `#[prop(default)]` props may be omitted).
             let props = Ident::new(&format!("{}Props", el.tag), Span::call_site());
-            args.push(quote! { #props { #(#fields),* } });
+            args.push(quote! { #props::builder() #(#fields)* .build() });
         }
         let slots = Ident::new(&format!("{}Slots", el.tag), Span::call_site());
         args.push(quote! { #slots::for_backend(&__backend) #(#setters)* });

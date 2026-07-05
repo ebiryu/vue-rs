@@ -1,0 +1,23 @@
+<template>
+  <button @click="bump()">{{ value.get().to_string() }}</button>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::ReadSignal;
+use vue_rs_dom::Callback;
+
+pub struct StepperProps {
+    pub value: ReadSignal<i32>,
+    // Optional: the parent may omit `@update` and emitted values are dropped.
+    #[prop(default)]
+    pub on_update: Callback<i32>,
+    // Optional: the parent may omit `:step`, defaulting to 1.
+    #[prop(default = 1)]
+    pub step: i32,
+}
+
+let value = props.value;
+let step = props.step;
+let on_update = props.on_update.clone();
+let bump = move || on_update.call(value.get() + step);
+</script>

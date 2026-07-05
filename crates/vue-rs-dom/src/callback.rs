@@ -27,3 +27,11 @@ impl<T, F: Fn(T) + 'static> From<F> for Callback<T> {
         Self::new(handler)
     }
 }
+
+impl<T> Default for Callback<T> {
+    /// A no-op callback, so an optional emit prop (`#[prop(default)]`) the parent
+    /// leaves unlistened simply drops emitted values.
+    fn default() -> Self {
+        Self::new(|_| {})
+    }
+}

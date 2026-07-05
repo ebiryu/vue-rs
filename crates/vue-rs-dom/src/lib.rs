@@ -5,6 +5,7 @@
 //! builder wires reactive text/attributes to the reactive core via effects.
 
 mod backend;
+pub mod builder;
 mod callback;
 mod class;
 mod element;

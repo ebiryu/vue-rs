@@ -853,10 +853,10 @@ fn component_with_props_and_event() {
         quote! {
             Child(
                 __backend.clone(),
-                ChildProps {
-                    value: ::core::convert::Into::into(count),
-                    on_change: ::vue_rs_dom::Callback::new(handler)
-                },
+                ChildProps::builder()
+                    .value(::core::convert::Into::into(count))
+                    .on_change(::vue_rs_dom::Callback::new(handler))
+                    .build(),
                 ChildSlots::for_backend(&__backend)
             )
         },
@@ -871,7 +871,7 @@ fn component_nested_in_element() {
             El::new(__backend.clone(), "div")
                 .child(Child(
                     __backend.clone(),
-                    ChildProps { x: ::core::convert::Into::into(y) },
+                    ChildProps::builder().x(::core::convert::Into::into(y)).build(),
                     ChildSlots::for_backend(&__backend)
                 ))
                 .finish()
@@ -888,10 +888,10 @@ fn v_model_on_component_becomes_prop_down_and_emit_up() {
         quote! {
             Child(
                 __backend.clone(),
-                ChildProps {
-                    model_value: ::core::convert::Into::into(name),
-                    on_update_model_value: ::vue_rs_dom::Callback::new(move |__v| (name).set(__v))
-                },
+                ChildProps::builder()
+                    .model_value(::core::convert::Into::into(name))
+                    .on_update_model_value(::vue_rs_dom::Callback::new(move |__v| (name).set(__v)))
+                    .build(),
                 ChildSlots::for_backend(&__backend)
             )
         },
@@ -906,10 +906,10 @@ fn v_model_arg_on_component_becomes_named_model_prop() {
         quote! {
             Child(
                 __backend.clone(),
-                ChildProps {
-                    title: ::core::convert::Into::into(heading),
-                    on_update_title: ::vue_rs_dom::Callback::new(move |__v| (heading).set(__v))
-                },
+                ChildProps::builder()
+                    .title(::core::convert::Into::into(heading))
+                    .on_update_title(::vue_rs_dom::Callback::new(move |__v| (heading).set(__v)))
+                    .build(),
                 ChildSlots::for_backend(&__backend)
             )
         },
@@ -923,11 +923,11 @@ fn v_model_on_component_coexists_with_other_props() {
         quote! {
             Child(
                 __backend.clone(),
-                ChildProps {
-                    value: ::core::convert::Into::into(count),
-                    model_value: ::core::convert::Into::into(name),
-                    on_update_model_value: ::vue_rs_dom::Callback::new(move |__v| (name).set(__v))
-                },
+                ChildProps::builder()
+                    .value(::core::convert::Into::into(count))
+                    .model_value(::core::convert::Into::into(name))
+                    .on_update_model_value(::vue_rs_dom::Callback::new(move |__v| (name).set(__v)))
+                    .build(),
                 ChildSlots::for_backend(&__backend)
             )
         },

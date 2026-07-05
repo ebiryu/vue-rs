@@ -152,10 +152,20 @@ pub fn component(input: TokenStream) -> TokenStream {
     }
     let (slots_struct_def, slots_param) = gen_slots_struct(&slots_ty, &slot_defs);
 
+    // Emit the (cleaned) `NameProps` struct plus its typestate builder. The
+    // parent passes props by name through the builder; required props stay
+    // checked at compile time, and `#[prop(default)]` fields become optional.
+    let props_defs = match props_struct.as_ref() {
+        Some(item) => match gen_props_builder(item) {
+            Ok(defs) => defs,
+            Err(err) => return compile_error(&err),
+        },
+        None => quote! {},
+    };
+
     let props_param = props_struct.as_ref().map(|item| {
         let ty = &item.ident;
-        let (_, ty_generics, _) = item.generics.split_for_impl();
-        quote! { , props: #ty #ty_generics }
+        quote! { , props: #ty }
     });
 
     let style_const = sfc.style.as_ref().map(|css| {
@@ -167,7 +177,7 @@ pub fn component(input: TokenStream) -> TokenStream {
     quote! {
         #(#uses)*
         #(#structs)*
-        #props_struct
+        #props_defs
         #slots_struct_def
         #style_const
 
@@ -255,6 +265,235 @@ fn gen_slots_struct(
         }
     };
     (def, quote! { , __slots: #slots_ty<B> })
+}
+
+/// How an optional prop's value is filled when the parent omits it.
+enum PropDefault {
+    /// `#[prop(default)]`: use `Default::default()`.
+    Auto,
+    /// `#[prop(default = expr)]`: use `expr`.
+    Expr(Expr),
+}
+
+/// Parse a field's `#[prop(default[= expr])]` attribute, if present. A field
+/// with such an attribute is optional; without one it is required.
+fn parse_prop_default(field: &syn::Field) -> Result<Option<PropDefault>, String> {
+    let mut found = None;
+    for attr in &field.attrs {
+        if !attr.path().is_ident("prop") {
+            continue;
+        }
+        let parsed = attr
+            .parse_args_with(|input: ParseStream| {
+                let kw: Ident = input.parse()?;
+                if kw != "default" {
+                    return Err(syn::Error::new(kw.span(), "expected `default`"));
+                }
+                if input.peek(Token![=]) {
+                    input.parse::<Token![=]>()?;
+                    Ok(PropDefault::Expr(input.parse()?))
+                } else {
+                    Ok(PropDefault::Auto)
+                }
+            })
+            .map_err(|e| format!("invalid `#[prop(...)]` on `{}`: {e}", field.ident.as_ref().unwrap()))?;
+        found = Some(parsed);
+    }
+    Ok(found)
+}
+
+/// Generate a component's props type: the `NameProps` struct (with `#[prop]`
+/// attributes stripped) plus a typestate builder the parent uses to pass props
+/// by name.
+///
+/// Each *required* prop carries a marker type parameter that its setter flips
+/// from `Unset` to `Set`; `build()` exists only when every marker is `Set`, so
+/// omitting a required prop leaves the `.build()` call uncompilable — required
+/// props stay checked at compile time. A prop marked `#[prop(default)]` or
+/// `#[prop(default = expr)]` is optional: it has no marker, and `build()` fills
+/// the default when the parent omits it.
+fn gen_props_builder(item: &syn::ItemStruct) -> Result<proc_macro2::TokenStream, String> {
+    if !item.generics.params.is_empty() {
+        return Err(format!(
+            "generic props struct `{}` is not supported",
+            item.ident
+        ));
+    }
+    let syn::Fields::Named(named) = &item.fields else {
+        return Err(format!("props struct `{}` must have named fields", item.ident));
+    };
+
+    let ty = &item.ident;
+    let builder_ty = Ident::new(&format!("{ty}Builder"), ty.span());
+
+    // Classify each field as required or optional (with its default).
+    struct FieldInfo {
+        ident: Ident,
+        ty: syn::Type,
+        default: Option<PropDefault>,
+    }
+    let mut fields: Vec<FieldInfo> = Vec::new();
+    for field in &named.named {
+        fields.push(FieldInfo {
+            ident: field.ident.clone().unwrap(),
+            ty: field.ty.clone(),
+            default: parse_prop_default(field)?,
+        });
+    }
+
+    // One marker type parameter per required field, in declaration order.
+    let marker_params: Vec<Ident> = fields
+        .iter()
+        .filter(|f| f.default.is_none())
+        .enumerate()
+        .map(|(i, _)| Ident::new(&format!("__M{i}"), proc_macro2::Span::call_site()))
+        .collect();
+    let k = marker_params.len();
+    let unset = quote! { ::vue_rs_dom::builder::Unset };
+    let set = quote! { ::vue_rs_dom::builder::Set };
+
+    // Angle-bracket a marker list, or nothing when there are no required fields.
+    let generics = |markers: Vec<proc_macro2::TokenStream>| {
+        if markers.is_empty() {
+            quote! {}
+        } else {
+            quote! { <#(#markers),*> }
+        }
+    };
+    let builder_all_unset = {
+        let g = generics((0..k).map(|_| unset.clone()).collect());
+        quote! { #builder_ty #g }
+    };
+    let builder_all_set = {
+        let g = generics((0..k).map(|_| set.clone()).collect());
+        quote! { #builder_ty #g }
+    };
+
+    // The builder holds every field as `Option`, plus a `PhantomData` over the
+    // markers so required-field state is tracked in the type.
+    let builder_fields = fields.iter().map(|f| {
+        let (ident, fty) = (&f.ident, &f.ty);
+        quote! { #ident: ::core::option::Option<#fty> }
+    });
+    let markers_field = (k > 0).then(|| {
+        quote! { , __markers: ::core::marker::PhantomData<(#(#marker_params),*)> }
+    });
+    let markers_init = (k > 0).then(|| quote! { , __markers: ::core::marker::PhantomData });
+    let struct_generics = generics(marker_params.iter().map(|m| quote! { #m }).collect());
+
+    let none_inits = fields.iter().map(|f| {
+        let ident = &f.ident;
+        quote! { #ident: ::core::option::Option::None }
+    });
+
+    // A setter per field. Required setters flip their marker `Unset` → `Set`
+    // (generic over the other markers); optional setters leave markers alone.
+    let mut req_seen = 0usize;
+    let setters = fields.iter().map(|f| {
+        let (ident, fty) = (&f.ident, &f.ty);
+        if f.default.is_some() {
+            // Optional: no marker change.
+            let g = generics(marker_params.iter().map(|m| quote! { #m }).collect());
+            let self_ty = generics(marker_params.iter().map(|m| quote! { #m }).collect());
+            quote! {
+                impl #g #builder_ty #self_ty {
+                    #[allow(dead_code)]
+                    pub fn #ident(mut self, value: #fty) -> Self {
+                        self.#ident = ::core::option::Option::Some(value);
+                        self
+                    }
+                }
+            }
+        } else {
+            // Required: marker at this position goes `Unset` → `Set`.
+            let pos = req_seen;
+            req_seen += 1;
+            let others: Vec<&Ident> = marker_params
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != pos)
+                .map(|(_, m)| m)
+                .collect();
+            let in_markers: Vec<proc_macro2::TokenStream> = marker_params
+                .iter()
+                .enumerate()
+                .map(|(j, m)| if j == pos { unset.clone() } else { quote! { #m } })
+                .collect();
+            let out_markers: Vec<proc_macro2::TokenStream> = marker_params
+                .iter()
+                .enumerate()
+                .map(|(j, m)| if j == pos { set.clone() } else { quote! { #m } })
+                .collect();
+            let rest = fields.iter().filter(|g| &g.ident != ident).map(|g| {
+                let id = &g.ident;
+                quote! { #id: self.#id }
+            });
+            quote! {
+                impl<#(#others),*> #builder_ty<#(#in_markers),*> {
+                    #[allow(dead_code)]
+                    pub fn #ident(self, value: #fty) -> #builder_ty<#(#out_markers),*> {
+                        #builder_ty {
+                            #ident: ::core::option::Option::Some(value),
+                            #(#rest,)*
+                            __markers: ::core::marker::PhantomData
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // `build()` is reachable only when every required marker is `Set`.
+    let build_inits = fields.iter().map(|f| {
+        let ident = &f.ident;
+        match &f.default {
+            None => quote! { #ident: ::core::option::Option::unwrap(self.#ident) },
+            Some(PropDefault::Auto) => quote! {
+                #ident: ::core::option::Option::unwrap_or_else(
+                    self.#ident, || ::core::default::Default::default())
+            },
+            Some(PropDefault::Expr(expr)) => quote! {
+                #ident: ::core::option::Option::unwrap_or_else(self.#ident, || #expr)
+            },
+        }
+    });
+
+    // The struct itself, with `#[prop]` attributes removed so it is valid Rust.
+    let mut cleaned = item.clone();
+    if let syn::Fields::Named(named) = &mut cleaned.fields {
+        for field in &mut named.named {
+            field.attrs.retain(|a| !a.path().is_ident("prop"));
+        }
+    }
+
+    Ok(quote! {
+        #cleaned
+
+        #[allow(non_camel_case_types)]
+        pub struct #builder_ty #struct_generics {
+            #(#builder_fields),*
+            #markers_field
+        }
+
+        impl #ty {
+            #[allow(dead_code)]
+            pub fn builder() -> #builder_all_unset {
+                #builder_ty {
+                    #(#none_inits),*
+                    #markers_init
+                }
+            }
+        }
+
+        #(#setters)*
+
+        impl #builder_all_set {
+            #[allow(dead_code)]
+            pub fn build(self) -> #ty {
+                #ty { #(#build_inits),* }
+            }
+        }
+    })
 }
 
 /// Each `name: Payload` field of a declared `NameSlots` struct gives a scoped
