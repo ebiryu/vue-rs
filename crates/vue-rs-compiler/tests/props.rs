@@ -39,8 +39,37 @@ fn path_qualified_signal_prop_field_is_rejected() {
 
 #[test]
 fn signal_nested_inside_another_type_is_allowed() {
-    // Only the *top-level* prop type is checked: a composite that happens to
-    // carry signals inside (e.g. a row struct) is a deliberate pattern.
+    // An opaque user-defined type's own fields are invisible from here (no
+    // whole-program type info), so a composite that happens to carry signals
+    // inside its *own* definition (e.g. a row struct) is a deliberate pattern
+    // and cannot be checked.
     let s = item("struct P { pub rows: Vec<Row> }");
     assert!(check_prop_fields(&s).is_ok());
+}
+
+#[test]
+fn signal_inside_vec_prop_field_is_rejected() {
+    // Unlike an opaque type, `Vec<Signal<i32>>` spells the writable handle
+    // out directly in the prop's own type, so it must be caught.
+    let s = item("struct P { pub rows: Vec<Signal<i32>> }");
+    let err = check_prop_fields(&s).unwrap_err().to_string();
+    assert!(err.contains("rows"), "should name the field: {err}");
+}
+
+#[test]
+fn writable_memo_inside_option_prop_field_is_rejected() {
+    let s = item("struct P { pub value: Option<WritableMemo<i32>> }");
+    assert!(check_prop_fields(&s).is_err());
+}
+
+#[test]
+fn signal_inside_tuple_prop_field_is_rejected() {
+    let s = item("struct P { pub pair: (Signal<i32>, String) }");
+    assert!(check_prop_fields(&s).is_err());
+}
+
+#[test]
+fn signal_doubly_nested_in_generics_is_rejected() {
+    let s = item("struct P { pub rows: Vec<Option<Signal<i32>>> }");
+    assert!(check_prop_fields(&s).is_err());
 }

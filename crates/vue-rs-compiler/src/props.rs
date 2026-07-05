@@ -2,9 +2,10 @@
 
 use crate::CompileError;
 
-/// Reject props whose top-level type is a *writable* reactive handle
-/// (`Signal`/`WritableMemo`), enforcing one-way data flow: a child observes
-/// props but cannot mutate parent state through them.
+/// Reject props whose type spells out a *writable* reactive handle
+/// (`Signal`/`WritableMemo`) anywhere in its own type expression, enforcing
+/// one-way data flow: a child observes props but cannot mutate parent state
+/// through them.
 ///
 /// The parent already converts reactive values to a read-only `ReadSignal` when
 /// passing them (`Into::into`), but std's reflexive `From<T> for T` means a
@@ -13,9 +14,13 @@ use crate::CompileError;
 /// must be `ReadSignal`/`Memo` (read-only) or plain values, and updates flow
 /// back up through emits (`Callback`).
 ///
-/// Only the top-level field type is checked; a composite prop that carries
-/// signals inside (e.g. a list of rows each owning its own signals) is a
-/// deliberate pattern and is allowed.
+/// The check walks generic arguments, tuples, arrays/slices and references
+/// (e.g. `Vec<Signal<i32>>`, `Option<WritableMemo<i32>>`, `(Signal<i32>, …)`),
+/// so a writable handle can't be smuggled in through a visible container type.
+/// It cannot see inside an opaque user-defined type's own fields (no
+/// whole-program type info at this stage), so a composite prop whose *own*
+/// definition carries signals (e.g. a list of rows each owning its own
+/// signal) is a deliberate pattern and stays allowed.
 pub fn check_prop_fields(props: &syn::ItemStruct) -> Result<(), CompileError> {
     let syn::Fields::Named(fields) = &props.fields else {
         return Ok(());
@@ -37,15 +42,31 @@ pub fn check_prop_fields(props: &syn::ItemStruct) -> Result<(), CompileError> {
     Ok(())
 }
 
-/// If `ty` is a path ending in a writable handle (`Signal`/`WritableMemo`),
-/// return that handle's name.
+/// If a writable handle (`Signal`/`WritableMemo`) appears anywhere in `ty`'s
+/// own type expression, return that handle's name.
 fn writable_handle_name(ty: &syn::Type) -> Option<&'static str> {
-    let syn::Type::Path(path) = ty else {
-        return None;
-    };
-    match path.path.segments.last()?.ident.to_string().as_str() {
-        "Signal" => Some("Signal"),
-        "WritableMemo" => Some("WritableMemo"),
+    match ty {
+        syn::Type::Path(path) => {
+            let seg = path.path.segments.last()?;
+            match seg.ident.to_string().as_str() {
+                "Signal" => return Some("Signal"),
+                "WritableMemo" => return Some("WritableMemo"),
+                _ => {}
+            }
+            let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+                return None;
+            };
+            args.args.iter().find_map(|arg| match arg {
+                syn::GenericArgument::Type(inner) => writable_handle_name(inner),
+                _ => None,
+            })
+        }
+        syn::Type::Tuple(tuple) => tuple.elems.iter().find_map(writable_handle_name),
+        syn::Type::Reference(r) => writable_handle_name(&r.elem),
+        syn::Type::Array(a) => writable_handle_name(&a.elem),
+        syn::Type::Slice(s) => writable_handle_name(&s.elem),
+        syn::Type::Paren(p) => writable_handle_name(&p.elem),
+        syn::Type::Group(g) => writable_handle_name(&g.elem),
         _ => None,
     }
 }
