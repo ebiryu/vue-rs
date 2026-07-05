@@ -205,6 +205,10 @@ enum Kind {
     },
     Effect {
         run: Option<Box<dyn FnMut()>>,
+        /// When true, this effect runs synchronously the moment a dependency
+        /// changes instead of being deferred to the batched flush. Used by
+        /// `flush: 'sync'` watchers.
+        sync: bool,
     },
     /// An ownership-only node created by [`create_root`]; not reactive.
     Root,
@@ -259,6 +263,7 @@ struct Runtime {
     owner: Option<NodeId>,    // current ownership node
     batch_depth: usize,       // >0 while inside batch(): defer effect runs
     pending: VecDeque<NodeId>, // effects deferred by a batch, deduped, FIFO
+    sync_pending: VecDeque<NodeId>, // sync effects to run immediately, deduped, FIFO
     flushing: bool,           // true while draining `pending`
     reading_depth: usize,     // >0 while inside a read closure: defer effect runs
     post_flush: Vec<Box<dyn FnOnce()>>, // next_tick callbacks, run after effects
@@ -275,6 +280,7 @@ thread_local! {
         owner: None,
         batch_depth: 0,
         pending: VecDeque::new(),
+        sync_pending: VecDeque::new(),
         flushing: false,
         reading_depth: 0,
         post_flush: Vec::new(),
@@ -632,17 +638,26 @@ fn set_state(id: NodeId, state: State) {
 /// queuing any effect that leaves the `Clean` state.
 fn mark_stale(id: NodeId, target: State) {
     let subs = RT.with_borrow_mut(|rt| {
-        let (was_clean, is_effect) = {
+        let (was_clean, is_effect, is_sync) = {
             let node = rt.nodes.get_mut(id)?;
             if node.state >= target {
                 return None;
             }
             let was_clean = node.state == State::Clean;
             node.state = target;
-            (was_clean, matches!(node.kind, Kind::Effect { .. }))
+            let is_sync = matches!(node.kind, Kind::Effect { sync: true, .. });
+            (was_clean, matches!(node.kind, Kind::Effect { .. }), is_sync)
         };
-        if was_clean && is_effect && !rt.pending.contains(&id) {
-            rt.pending.push_back(id);
+        if was_clean && is_effect {
+            // Sync effects run immediately after this notification settles
+            // (see `notify_subscribers`); all others defer to the flush.
+            if is_sync {
+                if !rt.sync_pending.contains(&id) {
+                    rt.sync_pending.push_back(id);
+                }
+            } else if !rt.pending.contains(&id) {
+                rt.pending.push_back(id);
+            }
         }
         Some(rt.collect_subs(id))
     });
@@ -659,7 +674,21 @@ fn notify_subscribers(id: NodeId) {
     for s in subs {
         mark_stale(s, State::Dirty);
     }
+    run_sync_effects();
     maybe_flush();
+}
+
+/// Run every sync effect that this notification marked stale, synchronously and
+/// regardless of any active batch. Running one may mark more (via nested writes),
+/// so drain until empty.
+fn run_sync_effects() {
+    loop {
+        let next = RT.with_borrow_mut(|rt| rt.sync_pending.pop_front());
+        match next {
+            Some(e) => update_if_necessary(e),
+            None => break,
+        }
+    }
 }
 
 /// Bring `id` up to date if any source may have changed (pull-based evaluation).
@@ -689,7 +718,7 @@ fn update(id: NodeId) {
 
     if is_effect {
         let run = RT.with_borrow_mut(|rt| match rt.nodes.get_mut(id).map(|n| &mut n.kind) {
-            Some(Kind::Effect { run }) => run.take(),
+            Some(Kind::Effect { run, .. }) => run.take(),
             _ => None,
         });
         let Some(mut run) = run else { return };
@@ -699,7 +728,7 @@ fn update(id: NodeId) {
         run_scoped(id, || run());
         RT.with_borrow_mut(|rt| {
             rt.end_tracking(id);
-            if let Some(Kind::Effect { run: slot }) = rt.nodes.get_mut(id).map(|n| &mut n.kind) {
+            if let Some(Kind::Effect { run: slot, .. }) = rt.nodes.get_mut(id).map(|n| &mut n.kind) {
                 *slot = Some(run);
             }
         });
@@ -1230,9 +1259,16 @@ pub fn batch<T>(f: impl FnOnce() -> T) -> T {
 
 /// Run `f` immediately and re-run it whenever any reactive value it read changes.
 pub fn effect(f: impl FnMut() + 'static) {
+    make_effect(f, false);
+}
+
+/// Build an effect node and run it once. When `sync` is set, later dependency
+/// changes run it synchronously instead of deferring to the flush.
+fn make_effect(f: impl FnMut() + 'static, sync: bool) {
     let id = new_node(
         Kind::Effect {
             run: Some(Box::new(f)),
+            sync,
         },
         None,
     );
@@ -1250,6 +1286,30 @@ fn untrack<R>(f: impl FnOnce() -> R) -> R {
     result
 }
 
+/// When a [`watch`] callback runs relative to the batched effect flush. Vue's
+/// `flush` option.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Flush {
+    /// Run the callback during the flush, before post-flush callbacks. Default.
+    #[default]
+    Pre,
+    /// Defer the callback until after all effects have run (e.g. after the DOM
+    /// has been updated). Reached via [`next_tick`]-style post-flush ordering.
+    Post,
+    /// Run the callback synchronously the moment the source changes, even inside
+    /// a [`batch`] (so it fires once per individual write).
+    Sync,
+}
+
+/// Options for [`watch_with`]. Vue's `watch(source, cb, options)` third argument.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WatchOptions {
+    /// Run the callback once on setup (with `None` for the old value).
+    pub immediate: bool,
+    /// When the callback runs relative to the flush. See [`Flush`].
+    pub flush: Flush,
+}
+
 /// Watch a `source` getter and run `callback` with the new and previous values
 /// whenever the source's value changes. The callback does not run on setup, and
 /// reactive reads inside it are not tracked. The watcher is owned by the current
@@ -1260,45 +1320,75 @@ where
     S: Fn() -> T + 'static,
     C: FnMut(&T, &T) + 'static,
 {
-    let mut prev: Option<T> = None;
-    effect(move || {
-        let next = source();
-        match prev.take() {
-            None => prev = Some(next),
-            Some(old) => {
-                if next != old {
-                    untrack(|| callback(&next, &old));
-                }
-                prev = Some(next);
-            }
-        }
-    });
+    // Not immediate, so the old value is always present once the callback fires.
+    watch_with(
+        source,
+        move |new, old| callback(new, old.expect("lazy watch always has an old value")),
+        WatchOptions::default(),
+    );
 }
 
 /// Like [`watch`], but the callback also runs immediately on setup, with `None`
 /// for the old value. Subsequent changes pass `Some(previous)`.
-pub fn watch_immediate<T, S, C>(source: S, mut callback: C)
+pub fn watch_immediate<T, S, C>(source: S, callback: C)
 where
     T: Clone + PartialEq + 'static,
     S: Fn() -> T + 'static,
     C: FnMut(&T, Option<&T>) + 'static,
 {
-    let mut prev: Option<T> = None;
-    effect(move || {
+    watch_with(
+        source,
+        callback,
+        WatchOptions {
+            immediate: true,
+            ..Default::default()
+        },
+    );
+}
+
+/// General form of [`watch`] accepting [`WatchOptions`] (`immediate` and
+/// `flush`). The callback receives the new value and `Some(old)` on change, or
+/// `None` for the old value on the initial `immediate` run.
+pub fn watch_with<T, S, C>(source: S, callback: C, options: WatchOptions)
+where
+    T: Clone + PartialEq + 'static,
+    S: Fn() -> T + 'static,
+    C: FnMut(&T, Option<&T>) + 'static,
+{
+    let WatchOptions { immediate, flush } = options;
+    // The callback and previous value are shared: `flush: Post` invokes the
+    // callback from a deferred closure, separately from the effect that detects
+    // the change.
+    let callback = Rc::new(RefCell::new(callback));
+    let prev: Rc<RefCell<Option<T>>> = Rc::new(RefCell::new(None));
+
+    let run = move || {
         let next = source();
-        match prev.take() {
-            None => {
-                untrack(|| callback(&next, None));
-                prev = Some(next);
-            }
-            Some(old) => {
-                if next != old {
-                    untrack(|| callback(&next, Some(&old)));
-                }
-                prev = Some(next);
-            }
+        let old = prev.borrow_mut().take();
+        let fire = match &old {
+            None => immediate,     // first run: only when immediate
+            Some(o) => next != *o, // change: dedup unchanged values
+        };
+        *prev.borrow_mut() = Some(next.clone());
+        if !fire {
+            return;
         }
-    });
+        let callback = callback.clone();
+        let invoke = move || untrack(|| (callback.borrow_mut())(&next, old.as_ref()));
+        match flush {
+            // Sync runs inline too, but its effect is scheduled synchronously.
+            Flush::Pre | Flush::Sync => invoke(),
+            Flush::Post => queue_post(invoke),
+        }
+    };
+    make_effect(run, flush == Flush::Sync);
+}
+
+/// Queue `f` to run in the post-flush phase (after effects), then request a
+/// flush. Used by `flush: 'post'` watchers.
+fn queue_post(f: impl FnOnce() + 'static) {
+    RT.with_borrow_mut(|rt| rt.post_flush.push(Box::new(f)));
+    maybe_flush();
 }
 
 /// Register a cleanup to run before the current owner re-runs, and when it is
