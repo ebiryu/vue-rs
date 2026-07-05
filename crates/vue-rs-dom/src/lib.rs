@@ -4,6 +4,7 @@
 //! or `WebDom` (with the `web` feature) for the real browser DOM. The [`El`]
 //! builder wires reactive text/attributes to the reactive core via effects.
 
+mod attrs;
 mod backend;
 pub mod builder;
 mod callback;
@@ -16,6 +17,7 @@ mod style;
 #[cfg(feature = "web")]
 mod web;
 
+pub use attrs::IntoAttrs;
 pub use backend::{Backend, EventOptions};
 pub use callback::Callback;
 pub use class::ClassList;

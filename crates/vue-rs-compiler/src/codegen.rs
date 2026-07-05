@@ -737,6 +737,15 @@ fn gen_attr(
                 })
             })
         }
+        // `v-bind="obj"` (bulk bind) spreads a bag of attributes: the expression
+        // is turned into `(name, value)` pairs via `IntoAttrs` and applied
+        // reactively, removing any that disappear between updates.
+        Attr::Static { name, value } if name == "v-bind" => {
+            let expr = parse_expr(value)?;
+            Ok(quote! {
+                .dyn_attrs(move || ::vue_rs_dom::IntoAttrs::into_attrs(#expr))
+            })
+        }
         // `v-html` sets the element's inner HTML from a (reactive) expression,
         // replacing any children. The expression must yield a `RawHtml`, so the
         // unescaped insertion is an explicit opt-in at the call site.

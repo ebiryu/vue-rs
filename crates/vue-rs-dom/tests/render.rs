@@ -1,7 +1,7 @@
 //! Contract for DOM rendering primitives, exercised against the in-memory
 //! `MockDom` backend so the reactive wiring is testable without a browser.
 
-use vue_rs_dom::{template_ref, El, EventOptions, MockDom, MockEvent, RawHtml};
+use vue_rs_dom::{template_ref, El, EventOptions, IntoAttrs, MockDom, MockEvent, RawHtml};
 use vue_rs_reactive::{create_root, signal};
 
 #[test]
@@ -101,6 +101,57 @@ fn dyn_attr_named_sets_and_renames_attribute() {
         dom.to_html(node),
         r#"<div title="b"></div>"#,
         "renaming should drop the stale attribute"
+    );
+}
+
+#[test]
+fn dyn_attrs_sets_every_pair_as_an_attribute() {
+    // `v-bind="obj"` spreads a bag of `(name, value)` pairs onto the element.
+    let dom = MockDom::new();
+    let node = El::new(dom.clone(), "div")
+        .dyn_attrs(|| {
+            vec![
+                ("id".to_string(), "app".to_string()),
+                ("title".to_string(), "hi".to_string()),
+            ]
+        })
+        .finish();
+    assert_eq!(dom.to_html(node), r#"<div id="app" title="hi"></div>"#);
+}
+
+#[test]
+fn dyn_attrs_updates_and_drops_stale_attributes() {
+    // When the bound bag changes, values update and names no longer present are
+    // removed so a stale attribute does not linger.
+    let dom = MockDom::new();
+    let attrs = signal(vec![
+        ("id".to_string(), "a".to_string()),
+        ("data-x".to_string(), "1".to_string()),
+    ]);
+    let node = El::new(dom.clone(), "div")
+        .dyn_attrs(move || attrs.get())
+        .finish();
+    assert_eq!(dom.to_html(node), r#"<div id="a" data-x="1"></div>"#);
+
+    attrs.set(vec![("id".to_string(), "b".to_string())]);
+    assert_eq!(
+        dom.to_html(node),
+        r#"<div id="b"></div>"#,
+        "the value updates and the dropped name is removed"
+    );
+}
+
+#[test]
+fn into_attrs_stringifies_pairs() {
+    // `IntoAttrs` stringifies keys and values, so a template can bind a bag of
+    // heterogeneous `Display` values.
+    let attrs = vec![("id", 3), ("tabindex", 0)].into_attrs();
+    assert_eq!(
+        attrs,
+        vec![
+            ("id".to_string(), "3".to_string()),
+            ("tabindex".to_string(), "0".to_string()),
+        ]
     );
 }
 

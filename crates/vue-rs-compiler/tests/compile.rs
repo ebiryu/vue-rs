@@ -800,6 +800,33 @@ fn bind_prop_and_attr_modifiers_conflict_errors() {
 }
 
 #[test]
+fn v_bind_object_becomes_dyn_attrs() {
+    // `v-bind="obj"` spreads a bag of attributes via `IntoAttrs` + `dyn_attrs`.
+    compiles_to(
+        r#"<div v-bind="attrs.get()"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_attrs(move || ::vue_rs_dom::IntoAttrs::into_attrs(attrs.get()))
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_bind_object_coexists_with_static_attributes() {
+    // A bulk bind sits alongside ordinary attributes in source order.
+    compiles_to(
+        r#"<div id="app" v-bind="extra()"></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .attr("id", "app")
+                .dyn_attrs(move || ::vue_rs_dom::IntoAttrs::into_attrs(extra()))
+                .finish()
+        },
+    );
+}
+
+#[test]
 fn self_closing_element() {
     compiles_to(
         r#"<input :value="v()" />"#,

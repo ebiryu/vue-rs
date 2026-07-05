@@ -116,6 +116,29 @@ impl<B: Backend> El<B> {
         self
     }
 
+    /// Spread a reactive bag of attributes onto the element (the `v-bind="obj"`
+    /// directive). Each run sets every `(name, value)` pair; a name that was set
+    /// on the previous run but is absent now is removed, so a stale attribute
+    /// does not linger.
+    pub fn dyn_attrs(self, f: impl Fn() -> Vec<(String, String)> + 'static) -> Self {
+        let backend = self.backend.clone();
+        let node = self.node.clone();
+        let mut prev: Vec<String> = Vec::new();
+        effect(move || {
+            let next = f();
+            for name in &prev {
+                if !next.iter().any(|(n, _)| n == name) {
+                    backend.remove_attribute(&node, name);
+                }
+            }
+            for (name, value) in &next {
+                backend.set_attribute(&node, name, value);
+            }
+            prev = next.into_iter().map(|(name, _)| name).collect();
+        });
+        self
+    }
+
     /// Set the element's inner HTML from a [`RawHtml`] value that re-evaluates
     /// whenever its reactive deps change (the `v-html` directive). The markup is
     /// inserted unescaped and replaces any children; requiring `RawHtml` keeps

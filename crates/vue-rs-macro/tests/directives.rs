@@ -133,6 +133,26 @@ fn dynamic_attribute_argument_binds_reactive_name() {
 }
 
 #[test]
+fn v_bind_object_spreads_attributes_reactively() {
+    // `v-bind="obj"` spreads a bag of `(name, value)` pairs; as the bag changes,
+    // values update and names that disappear are removed.
+    let dom = MockDom::new();
+    let attrs = signal(vec![
+        ("id".to_string(), "app".to_string()),
+        ("data-n".to_string(), "1".to_string()),
+    ]);
+    let node = view!(dom.clone(), r#"<div v-bind="attrs.get()"></div>"#);
+    assert_eq!(dom.to_html(node), r#"<div id="app" data-n="1"></div>"#);
+
+    attrs.set(vec![("id".to_string(), "main".to_string())]);
+    assert_eq!(
+        dom.to_html(node),
+        r#"<div id="main"></div>"#,
+        "the value updates and the dropped `data-n` is removed"
+    );
+}
+
+#[test]
 fn bind_prop_modifier_sets_dom_property_reactively() {
     let dom = MockDom::new();
     let text = signal("a".to_string());
