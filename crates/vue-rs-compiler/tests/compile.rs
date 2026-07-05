@@ -575,6 +575,51 @@ fn v_model_on_checkbox_rejects_modifiers() {
 }
 
 #[test]
+fn v_model_on_radio_static_value_binds_checked_and_change() {
+    // On `<input type="radio">`, `v-model` maps the model against the radio's
+    // `value`: `checked` reflects equality, and selecting it writes that value
+    // back. The `value` attribute is still rendered.
+    compiles_to(
+        r#"<input type="radio" value="a" v-model="picked" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .attr("type", "radio")
+                .attr("value", "a")
+                .dyn_bool_prop("checked", move || (picked).get() == "a")
+                .on_value("change", move |_| (picked).set("a".to_string()))
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_model_on_radio_dynamic_value_uses_the_expression() {
+    compiles_to(
+        r#"<input type="radio" :value="opt" v-model="picked" />"#,
+        quote! {
+            El::new(__backend.clone(), "input")
+                .attr("type", "radio")
+                .dyn_attr("value", move || (opt).to_string())
+                .dyn_bool_prop("checked", move || (picked).get() == (opt))
+                .on_value("change", move |_| (picked).set(opt))
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn v_model_on_radio_rejects_modifiers() {
+    assert!(
+        compile_template(r#"<input type="radio" value="a" v-model.number="picked" />"#).is_err()
+    );
+}
+
+#[test]
+fn v_model_on_radio_without_value_errors() {
+    assert!(compile_template(r#"<input type="radio" v-model="picked" />"#).is_err());
+}
+
+#[test]
 fn v_model_on_textarea_binds_value_property() {
     // A `<textarea>` has no `value` attribute (its content is its children), so
     // `v-model` drives the `value` DOM property instead and syncs on `input`.

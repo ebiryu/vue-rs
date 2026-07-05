@@ -516,6 +516,33 @@ fn v_model_checkbox_binds_boolean() {
 }
 
 #[test]
+fn v_model_radio_selects_by_value() {
+    let dom = MockDom::new();
+    let picked = signal(String::from("a"));
+
+    let a = view!(dom.clone(), r#"<input type="radio" value="a" v-model="picked" />"#);
+    let b = view!(dom.clone(), r#"<input type="radio" value="b" v-model="picked" />"#);
+
+    // The model drives each radio's `checked` property by value equality.
+    assert_eq!(dom.property(a, "checked").as_deref(), Some("true"));
+    assert_eq!(dom.property(b, "checked").as_deref(), Some("false"));
+
+    // Selecting "b" fires `change`; the model takes that radio's value.
+    dom.dispatch_value(b, "change", "b");
+    assert_eq!(picked.get(), "b");
+    assert_eq!(dom.property(a, "checked").as_deref(), Some("false"));
+    assert_eq!(dom.property(b, "checked").as_deref(), Some("true"));
+
+    // Programmatic model change reflects back into both radios.
+    picked.set("a".into());
+    assert_eq!(dom.property(a, "checked").as_deref(), Some("true"));
+    assert_eq!(dom.property(b, "checked").as_deref(), Some("false"));
+
+    // The `value` attribute is still rendered.
+    assert_eq!(dom.to_html(a), r#"<input type="radio" value="a"></input>"#);
+}
+
+#[test]
 fn v_model_lazy_syncs_on_change_not_input() {
     let dom = MockDom::new();
     let text = signal(String::from("hi"));

@@ -217,6 +217,18 @@ impl Codegen {
         } else {
             None
         };
+        // A radio's `v-model` maps the model against the element's `value`
+        // (static `value="x"` or dynamic `:value="expr"`); capture it here so
+        // `gen_attr` can build the `checked`/`change` binding.
+        let radio_value = if input_type == Some("radio") {
+            match (find_static(el, "value"), find_dyn(el, "value")) {
+                (Some(s), _) => Some(RadioValue::Static(s.to_string())),
+                (None, Some(expr)) => Some(RadioValue::Dyn(parse_expr(expr)?)),
+                (None, None) => None,
+            }
+        } else {
+            None
+        };
         let mut class_emitted = false;
         let mut style_emitted = false;
         for attr in &el.attrs {
@@ -244,7 +256,7 @@ impl Codegen {
                 }
                 continue;
             }
-            let part = gen_attr(attr, base_style.as_ref(), &el.tag, input_type)?;
+            let part = gen_attr(attr, base_style.as_ref(), &el.tag, input_type, radio_value.as_ref())?;
             chain = quote! { #chain #part };
         }
         // `v-html` and `v-text` own the element's content, so any template
@@ -590,11 +602,20 @@ fn slot_directive(el: &Element) -> Option<(&str, &str)> {
     })
 }
 
+/// The `value` a radio `<input>` carries, used to build its `v-model` binding:
+/// a static `value="x"` (compared/written as a string) or a dynamic `:value`
+/// expression (compared/written by value).
+enum RadioValue {
+    Static(String),
+    Dyn(syn::Expr),
+}
+
 fn gen_attr(
     attr: &Attr,
     base_style: Option<&TokenStream>,
     tag: &str,
     input_type: Option<&str>,
+    radio_value: Option<&RadioValue>,
 ) -> Result<TokenStream, String> {
     match attr {
         Attr::Static { name, value } if name == "v-model" || name.starts_with("v-model.") => {
@@ -611,6 +632,33 @@ fn gen_attr(
                 return Ok(quote! {
                     .dyn_bool_prop("checked", move || (#model).get())
                     .on_value("change", move |__value| (#model).set(__value == "true"))
+                });
+            }
+            // On `<input type="radio">`, `v-model` maps the model against the
+            // radio's own `value`: `checked` reflects equality and selecting it
+            // writes that value back. The `value` (static or `:value`) is still
+            // rendered as a normal attribute. The text modifiers do not apply.
+            if input_type == Some("radio") {
+                if let Some(modifier) = name.split('.').nth(1) {
+                    return Err(format!(
+                        "v-model modifier `.{modifier}` is not supported on a radio"
+                    ));
+                }
+                let value = radio_value.ok_or_else(|| {
+                    "`v-model` on a radio input requires a `value` or `:value` attribute"
+                        .to_string()
+                })?;
+                let (checked, set_val) = match value {
+                    RadioValue::Static(s) => {
+                        (quote! { (#model).get() == #s }, quote! { #s.to_string() })
+                    }
+                    RadioValue::Dyn(expr) => {
+                        (quote! { (#model).get() == (#expr) }, quote! { #expr })
+                    }
+                };
+                return Ok(quote! {
+                    .dyn_bool_prop("checked", move || #checked)
+                    .on_value("change", move |_| (#model).set(#set_val))
                 });
             }
             // Modifiers refine the binding: `.lazy` syncs on `change` instead of
