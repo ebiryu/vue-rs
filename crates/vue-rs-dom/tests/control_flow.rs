@@ -73,6 +73,61 @@ fn dyn_switch_selects_active_branch() {
 }
 
 #[test]
+fn dyn_element_rebuilds_when_tag_changes() {
+    let dom = MockDom::new();
+    let tag = signal("h1".to_string());
+    let root = El::new(dom.clone(), "div")
+        .dyn_element(
+            move || tag.get(),
+            move |b, t| El::new(b, t).text("hi").finish(),
+        )
+        .finish();
+
+    assert_eq!(dom.to_html(root), "<div><h1>hi</h1></div>");
+    tag.set("h2".to_string());
+    assert_eq!(dom.to_html(root), "<div><h2>hi</h2></div>");
+    // The same tag is a no-op (the subtree is not rebuilt).
+    tag.set("h2".to_string());
+    assert_eq!(dom.to_html(root), "<div><h2>hi</h2></div>");
+}
+
+#[test]
+fn dyn_element_branch_is_disposed_with_owning_scope() {
+    let dom = MockDom::new();
+    let tick = signal(0);
+    let runs = Rc::new(Cell::new(0));
+    let r = runs.clone();
+    let disposer = create_root(|| {
+        El::new(dom.clone(), "div")
+            .dyn_element(
+                || "p".to_string(),
+                move |b, t| {
+                    let r = r.clone();
+                    El::new(b, t)
+                        .dyn_text(move || {
+                            r.set(r.get() + 1);
+                            tick.get().to_string()
+                        })
+                        .finish()
+                },
+            )
+            .finish();
+    });
+
+    assert_eq!(runs.get(), 1);
+    tick.set(1);
+    assert_eq!(runs.get(), 2);
+
+    disposer.dispose();
+    tick.set(2);
+    assert_eq!(
+        runs.get(),
+        2,
+        "the mounted element's effects must be disposed with the owning scope"
+    );
+}
+
+#[test]
 fn dyn_switch_mounts_nothing_when_no_branch_matches() {
     let dom = MockDom::new();
     let show = signal(false);

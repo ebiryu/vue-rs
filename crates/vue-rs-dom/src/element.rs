@@ -375,6 +375,39 @@ impl<B: Backend> El<B> {
         self
     }
 
+    /// Mount a child element whose *tag* is reactive (the `<component :is>`
+    /// directive in its element form): build it from the current tag, and rebuild
+    /// it from scratch whenever the tag changes. The tag is deduped, so a run that
+    /// yields the same tag is a no-op.
+    pub fn dyn_element<TF, V>(self, tag: TF, view: V) -> Self
+    where
+        TF: Fn() -> String + 'static,
+        V: Fn(B, &str) -> B::Node + 'static,
+    {
+        let anchor = self.backend.create_anchor();
+        self.backend.append_child(&self.node, &anchor);
+        let backend = self.backend.clone();
+        let parent = self.node.clone();
+        let mounted: Rc<RefCell<Option<Branch<B>>>> = Rc::new(RefCell::new(None));
+        dispose_branches_on_cleanup::<B>(mounted.clone());
+        let current: RefCell<Option<String>> = RefCell::new(None);
+        effect(move || {
+            let next = tag();
+            if current.borrow().as_deref() == Some(next.as_str()) {
+                return;
+            }
+            *current.borrow_mut() = Some(next.clone());
+            if let Some((node, disposer)) = mounted.borrow_mut().take() {
+                backend.remove_child(&parent, &node);
+                disposer.dispose();
+            }
+            let (node, disposer) = build_element_branch(&backend, &view, &next);
+            backend.insert_before(&parent, &node, &anchor);
+            *mounted.borrow_mut() = Some((node, disposer));
+        });
+        self
+    }
+
     /// Render a keyed list. Rows are reused across updates by their key; rows are
     /// created, removed, and reordered to match `items`.
     pub fn dyn_for<T, K, IT, KF, V>(self, items: IT, key: KF, view: V) -> Self
@@ -466,6 +499,20 @@ fn dispose_branches_on_cleanup<B: Backend>(mounted: Rc<RefCell<Option<Branch<B>>
             disposer.dispose();
         }
     });
+}
+
+/// Like [`build_branch`], but for a tag-parametrized view (the `dyn_element`
+/// builder): the current tag is passed to `view` so it can build the element.
+fn build_element_branch<B: Backend>(
+    backend: &B,
+    view: &dyn Fn(B, &str) -> B::Node,
+    tag: &str,
+) -> (B::Node, RootDisposer) {
+    let mut built = None;
+    let disposer = create_root_detached(|| {
+        built = Some(view(backend.clone(), tag));
+    });
+    (built.expect("view did not build a node"), disposer)
 }
 
 /// Build a view inside a detached reactive scope so it survives re-runs of the

@@ -683,3 +683,42 @@ fn v_text_renders_text_content_reactively() {
     msg.set(String::from("<world>"));
     assert_eq!(dom.to_html(node), "<span>&lt;world&gt;</span>");
 }
+
+#[test]
+fn dynamic_component_switches_tag_reactively() {
+    let dom = MockDom::new();
+    let tag = signal(String::from("h1"));
+
+    // `<component :is>` renders an element whose tag is reactive: changing `is`
+    // rebuilds the subtree under the new tag, keeping the pass-through children
+    // and attributes.
+    let node = view!(
+        dom.clone(),
+        r#"<div><component :is="tag.get()" class="title">hi</component></div>"#
+    );
+
+    assert_eq!(dom.to_html(node), r#"<div><h1 class="title">hi</h1></div>"#);
+    tag.set(String::from("h2"));
+    assert_eq!(dom.to_html(node), r#"<div><h2 class="title">hi</h2></div>"#);
+}
+
+#[test]
+fn dynamic_component_child_stays_reactive() {
+    let dom = MockDom::new();
+    let tag = signal(String::from("p"));
+    let count = signal(0);
+
+    let node = view!(
+        dom.clone(),
+        r#"<div><component :is="tag.get()">{{ count.get() }}</component></div>"#
+    );
+
+    assert_eq!(dom.to_html(node), "<div><p>0</p></div>");
+    count.set(5);
+    assert_eq!(dom.to_html(node), "<div><p>5</p></div>");
+    tag.set(String::from("span"));
+    assert_eq!(dom.to_html(node), "<div><span>5</span></div>");
+    // The rebuilt subtree remains reactive.
+    count.set(9);
+    assert_eq!(dom.to_html(node), "<div><span>9</span></div>");
+}

@@ -80,6 +80,50 @@ fn v_text_ignores_template_children() {
 }
 
 #[test]
+fn dynamic_component_becomes_dyn_element() {
+    // `<component :is="expr">` lowers to a `dyn_element` on the parent: the tag is
+    // reactive and the subtree is rebuilt when it changes.
+    compiles_to(
+        r#"<div><component :is="tag.get()">hi</component></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_element(
+                    move || (tag.get()).to_string(),
+                    move |__backend, __tag| El::new(__backend.clone(), __tag).text("hi").finish(),
+                )
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn dynamic_component_passes_through_attributes() {
+    // Attributes and events on `<component :is>` apply to the built element; the
+    // `:is` attribute itself is consumed, not rendered.
+    compiles_to(
+        r#"<div><component :is="tag.get()" class="box" @click="go()"></component></div>"#,
+        quote! {
+            El::new(__backend.clone(), "div")
+                .dyn_element(
+                    move || (tag.get()).to_string(),
+                    move |__backend, __tag| El::new(__backend.clone(), __tag)
+                        .attr("class", "box")
+                        .on("click", move || { go() })
+                        .finish(),
+                )
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn error_on_dynamic_component_at_template_root() {
+    // Without an enclosing element there is no anchor position, so a root-level
+    // `<component :is>` is rejected (like root-level control flow).
+    assert!(compile_template(r#"<component :is="tag.get()">hi</component>"#).is_err());
+}
+
+#[test]
 fn template_ref_becomes_node_ref() {
     // `ref="el"` binds the element's node into the `el` template ref handle.
     compiles_to(

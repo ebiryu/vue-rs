@@ -157,8 +157,33 @@ impl Codegen {
         if is_component(&el.tag) {
             return self.component(el);
         }
+        // `<component :is="expr">` is a dynamic element: it lowers to a
+        // `dyn_element` builder method on its parent (see `gen_dyn_component`), so
+        // it needs an enclosing element to anchor against. Reaching `element()`
+        // means it is used where a standalone node is expected (a template root or
+        // slot content), which has no anchor position.
+        if el.tag == "component" && find_dyn(el, "is").is_some() {
+            return Err(
+                "`<component :is>` is only supported as a child element, not as a template root or slot content"
+                    .to_string(),
+            );
+        }
         let tag = &el.tag;
-        let mut chain = quote! { El::new(__backend.clone(), #tag) };
+        let open = quote! { El::new(__backend.clone(), #tag) };
+        self.build_element(el, open, None)
+    }
+
+    /// Lower a plain element (given its opening `El::new(..)` expression and an
+    /// optional attribute name to ignore) into its builder chain. Shared by the
+    /// static-tag path in [`element`](Self::element) and the reactive-tag
+    /// `<component :is>` path in [`gen_dyn_component`](Self::gen_dyn_component).
+    fn build_element(
+        &self,
+        el: &Element,
+        open: TokenStream,
+        ignore: Option<&str>,
+    ) -> Result<TokenStream, String> {
+        let mut chain = open;
         if let Some(scope) = &self.scope {
             let marker = format!("data-v-{scope}");
             chain = quote! { #chain.attr(#marker, "") };
@@ -234,6 +259,11 @@ impl Codegen {
         for attr in &el.attrs {
             if is_structural(attr) {
                 continue; // v-if / v-else-if / v-else / v-for / :key are handled by the parent
+            }
+            if let (Some(ignore), Attr::Dyn { name, .. }) = (ignore, attr)
+                && name == ignore
+            {
+                continue; // consumed by the caller (e.g. `:is` on `<component>`)
             }
             if base_style.is_some() && is_style_attr(attr) {
                 continue; // folded into the `v-show` toggle below
@@ -450,6 +480,8 @@ impl Codegen {
                         return Err("v-else-if without a matching v-if".to_string());
                     } else if find_static(el, "v-else").is_some() {
                         return Err("v-else without a matching v-if".to_string());
+                    } else if el.tag == "component" && find_dyn(el, "is").is_some() {
+                        parts.push(self.gen_dyn_component(el)?);
                     } else {
                         let child = self.element(el)?;
                         parts.push(quote! { .child(#child) });
@@ -497,6 +529,23 @@ impl Codegen {
                     #(#pushes)*
                     __views
                 },
+            )
+        })
+    }
+
+    /// Lower `<component :is="expr">` to a `dyn_element` builder call on the
+    /// parent. The `:is` expression yields the (reactive) tag; the element's other
+    /// attributes and children build the subtree, which is rebuilt whenever the tag
+    /// changes. The builder closure receives the backend and the current tag.
+    fn gen_dyn_component(&self, el: &Element) -> Result<TokenStream, String> {
+        let is = find_dyn(el, "is").expect("checked by caller");
+        let is = parse_expr(is)?;
+        let open = quote! { El::new(__backend.clone(), __tag) };
+        let build = self.build_element(el, open, Some("is"))?;
+        Ok(quote! {
+            .dyn_element(
+                move || (#is).to_string(),
+                move |__backend, __tag| #build,
             )
         })
     }
