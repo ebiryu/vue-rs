@@ -18,6 +18,14 @@ fn read_only_and_plain_prop_fields_are_allowed() {
 }
 
 #[test]
+fn maybe_signal_prop_field_is_allowed() {
+    // `MaybeSignal<T>` is a read-only prop value (static value or reactive
+    // source, no `set`), so it is accepted like `ReadSignal`/`Memo`.
+    let s = item("struct P { pub label: MaybeSignal<String>, pub count: MaybeSignal<i32> }");
+    assert!(check_prop_fields(&s).is_ok());
+}
+
+#[test]
 fn signal_prop_field_is_rejected() {
     let s = item("struct P { pub value: Signal<i32> }");
     let err = check_prop_fields(&s).unwrap_err().to_string();

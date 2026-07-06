@@ -1204,6 +1204,96 @@ fn set_through_setter(id: NodeId, value: Box<dyn Any>) {
     });
 }
 
+/// A prop value that is either a plain static value or a reactive source.
+///
+/// A child component that declares a prop as `MaybeSignal<T>` accepts both a
+/// static value (`:label="\"hi\""`) and a reactive one (`:label="name"` where
+/// `name` is a `Signal`/`Memo`), reading either behind one type. Reads track
+/// dependencies when the value is reactive and are inert when it is static.
+///
+/// It is `Clone` (not `Copy`): the `Static`/`Derived` arms own a value or a
+/// closure. Reading it in several reactive scopes needs a `.clone()` per scope.
+pub enum MaybeSignal<T: 'static> {
+    /// A plain value with no reactivity.
+    Static(T),
+    /// A read-only view of a reactive source (from a `Signal`/`Memo`/`ReadSignal`).
+    Dynamic(ReadSignal<T>),
+    /// A closure recomputed on each read, tracking whatever it reads.
+    Derived(Rc<dyn Fn() -> T>),
+}
+
+impl<T: 'static> Clone for MaybeSignal<T>
+where
+    T: Clone,
+{
+    fn clone(&self) -> Self {
+        match self {
+            MaybeSignal::Static(v) => MaybeSignal::Static(v.clone()),
+            MaybeSignal::Dynamic(s) => MaybeSignal::Dynamic(*s),
+            MaybeSignal::Derived(f) => MaybeSignal::Derived(f.clone()),
+        }
+    }
+}
+
+impl<T: 'static> MaybeSignal<T> {
+    /// Wrap a closure as a derived reactive value (Vue's `() => expr`). Reading
+    /// the resulting `MaybeSignal` runs `f` and tracks its reactive reads.
+    pub fn derive(f: impl Fn() -> T + 'static) -> Self {
+        MaybeSignal::Derived(Rc::new(f))
+    }
+
+    /// Read with dependency tracking, cloning out the value.
+    pub fn get(&self) -> T
+    where
+        T: Clone,
+    {
+        match self {
+            MaybeSignal::Static(v) => v.clone(),
+            MaybeSignal::Dynamic(s) => s.get(),
+            MaybeSignal::Derived(f) => f(),
+        }
+    }
+
+    /// Read with dependency tracking, without requiring `Clone`.
+    pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        match self {
+            MaybeSignal::Static(v) => f(v),
+            MaybeSignal::Dynamic(s) => s.with(f),
+            MaybeSignal::Derived(g) => f(&g()),
+        }
+    }
+}
+
+impl<T: 'static> From<T> for MaybeSignal<T> {
+    fn from(value: T) -> Self {
+        MaybeSignal::Static(value)
+    }
+}
+
+impl<T: 'static> From<Signal<T>> for MaybeSignal<T> {
+    fn from(signal: Signal<T>) -> Self {
+        MaybeSignal::Dynamic(signal.read_only())
+    }
+}
+
+impl<T: 'static> From<Memo<T>> for MaybeSignal<T> {
+    fn from(memo: Memo<T>) -> Self {
+        MaybeSignal::Dynamic(memo.read_only())
+    }
+}
+
+impl<T: 'static> From<ReadSignal<T>> for MaybeSignal<T> {
+    fn from(view: ReadSignal<T>) -> Self {
+        MaybeSignal::Dynamic(view)
+    }
+}
+
+impl<T: 'static> From<WritableMemo<T>> for MaybeSignal<T> {
+    fn from(memo: WritableMemo<T>) -> Self {
+        MaybeSignal::Dynamic(memo.read_only().read_only())
+    }
+}
+
 /// Schedule `callback` to run after pending effects have flushed (Vue's
 /// `nextTick`). With synchronous flushing it runs immediately when nothing is in
 /// flight; with an async scheduler installed it always runs on the next flush.

@@ -1,0 +1,13 @@
+<template>
+  <span>{{ label.get() }}</span>
+</template>
+
+<script lang="rust">
+use vue_rs_reactive::MaybeSignal;
+
+pub struct LabeledProps {
+    pub label: MaybeSignal<String>,
+}
+
+let label = props.label;
+</script>

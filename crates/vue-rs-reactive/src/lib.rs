@@ -13,5 +13,6 @@ pub use runtime::{
     on_cleanup, on_mounted, on_scope_dispose, on_unmounted, provide_context, reactive, readonly,
     run_in_child_scope, set_scheduler, signal, signal_raw, use_context, watch, watch_immediate,
     watch_with, writable_computed, EffectScope,
-    Flush, Memo, Reactive, Readonly, ReadSignal, RootDisposer, Signal, WatchOptions, WritableMemo,
+    Flush, MaybeSignal, Memo, Reactive, Readonly, ReadSignal, RootDisposer, Signal, WatchOptions,
+    WritableMemo,
 };
