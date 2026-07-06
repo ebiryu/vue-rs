@@ -10,8 +10,8 @@ mod runtime;
 pub use runtime::{
     batch, clear_scheduler, computed, computed_raw, create_root, create_root_detached, effect,
     effect_scope, effect_scope_detached, flush_jobs, flush_mounted, get_current_scope, next_tick,
-    on_cleanup, on_mounted, on_scope_dispose, on_unmounted, provide_context, reactive,
+    on_cleanup, on_mounted, on_scope_dispose, on_unmounted, provide_context, reactive, readonly,
     run_in_child_scope, set_scheduler, signal, signal_raw, use_context, watch, watch_immediate,
     watch_with, writable_computed, EffectScope,
-    Flush, Memo, Reactive, ReadSignal, RootDisposer, Signal, WatchOptions, WritableMemo,
+    Flush, Memo, Reactive, Readonly, ReadSignal, RootDisposer, Signal, WatchOptions, WritableMemo,
 };

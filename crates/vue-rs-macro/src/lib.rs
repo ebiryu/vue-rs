@@ -217,6 +217,11 @@ fn compile_error(message: &str) -> TokenStream {
 /// companion is embedded recursively (as `<Field as Reactive>::Target`, built
 /// with `reactive(..)`) instead of `Signal<Field>`, so nested fields stay
 /// independently tracked.
+///
+/// It also generates a read-only view `StateReadonly` (each writable handle
+/// projected to a read-only one, recursively) and `impl Readonly for
+/// StateReactive`, so `readonly(reactive(State { .. }))` yields a view that reads
+/// the same nodes but exposes no writes.
 #[proc_macro_derive(Reactive, attributes(reactive))]
 pub fn derive_reactive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
@@ -253,16 +258,24 @@ fn gen_reactive(input: &syn::DeriveInput) -> Result<proc_macro2::TokenStream, St
     let name = &input.ident;
     let vis = &input.vis;
     let companion = quote::format_ident!("{}Reactive", name);
+    let readonly = quote::format_ident!("{}Readonly", name);
+
+    // The type of each companion field: `Signal<T>` for a plain field, or the
+    // nested companion `<T as Reactive>::Target` for a `#[reactive]` field.
+    let companion_field_ty = |f: &syn::Field| -> proc_macro2::TokenStream {
+        let fty = &f.ty;
+        if is_reactive_field(f) {
+            quote! { <#fty as ::vue_rs_reactive::Reactive>::Target }
+        } else {
+            quote! { ::vue_rs_reactive::Signal<#fty> }
+        }
+    };
 
     let companion_fields = fields.iter().map(|f| {
         let fvis = &f.vis;
         let fname = f.ident.as_ref().expect("named field");
-        let fty = &f.ty;
-        if is_reactive_field(f) {
-            quote! { #fvis #fname: <#fty as ::vue_rs_reactive::Reactive>::Target }
-        } else {
-            quote! { #fvis #fname: ::vue_rs_reactive::Signal<#fty> }
-        }
+        let fcty = companion_field_ty(f);
+        quote! { #fvis #fname: #fcty }
     });
 
     let inits = fields.iter().map(|f| {
@@ -274,10 +287,31 @@ fn gen_reactive(input: &syn::DeriveInput) -> Result<proc_macro2::TokenStream, St
         }
     });
 
+    // The read-only view mirrors the companion with every writable handle
+    // projected read-only (`<CompanionFieldTy as Readonly>::Target`), built by
+    // `readonly(..)` on each field. `Signal<T>` -> `ReadSignal<T>`, nested
+    // companions -> their own read-only view.
+    let readonly_fields = fields.iter().map(|f| {
+        let fvis = &f.vis;
+        let fname = f.ident.as_ref().expect("named field");
+        let fcty = companion_field_ty(f);
+        quote! { #fvis #fname: <#fcty as ::vue_rs_reactive::Readonly>::Target }
+    });
+
+    let readonly_inits = fields.iter().map(|f| {
+        let fname = f.ident.as_ref().expect("named field");
+        quote! { #fname: ::vue_rs_reactive::readonly(self.#fname) }
+    });
+
     Ok(quote! {
         #[derive(Clone, Copy)]
         #vis struct #companion {
             #(#companion_fields,)*
+        }
+
+        #[derive(Clone, Copy)]
+        #vis struct #readonly {
+            #(#readonly_fields,)*
         }
 
         impl ::vue_rs_reactive::Reactive for #name {
@@ -285,6 +319,15 @@ fn gen_reactive(input: &syn::DeriveInput) -> Result<proc_macro2::TokenStream, St
             fn into_reactive(self) -> Self::Target {
                 #companion {
                     #(#inits,)*
+                }
+            }
+        }
+
+        impl ::vue_rs_reactive::Readonly for #companion {
+            type Target = #readonly;
+            fn into_readonly(self) -> Self::Target {
+                #readonly {
+                    #(#readonly_inits,)*
                 }
             }
         }

@@ -1179,6 +1179,14 @@ impl<T: 'static> WritableMemo<T> {
     pub fn set(self, value: T) {
         set_through_setter(self.id, Box::new(value));
     }
+
+    /// A read-only view of this writable computed (same node, no `set`).
+    pub fn read_only(self) -> Memo<T> {
+        Memo {
+            id: self.id,
+            _t: PhantomData,
+        }
+    }
 }
 
 /// Invoke a writable computed's stored setter with the new value. The setter is
@@ -1605,6 +1613,53 @@ pub trait Reactive {
 /// [`Reactive`] (`#[derive(Reactive)]`).
 pub fn reactive<R: Reactive>(source: R) -> R::Target {
     source.into_reactive()
+}
+
+/// A reactive companion (or a single handle) that can be projected into a
+/// read-only view: every writable handle is replaced by a read-only one —
+/// `Signal<T>`/`WritableMemo<T>` become `ReadSignal<T>`/`Memo<T>`, recursively
+/// for nested companions. Vue's `readonly(reactive(..))`. Implemented for the
+/// primitive handles and, via `#[derive(Reactive)]`, for each generated
+/// companion (`FooReactive` -> `FooReadonly`).
+pub trait Readonly {
+    /// The read-only projection of `Self`.
+    type Target;
+    /// Project into the read-only view: same underlying nodes, no writes.
+    fn into_readonly(self) -> Self::Target;
+}
+
+/// Vue's `readonly(...)`: project a reactive companion (or a single handle) into
+/// a read-only view that reads the same nodes but exposes no writes.
+pub fn readonly<R: Readonly>(source: R) -> R::Target {
+    source.into_readonly()
+}
+
+impl<T: 'static> Readonly for Signal<T> {
+    type Target = ReadSignal<T>;
+    fn into_readonly(self) -> Self::Target {
+        self.read_only()
+    }
+}
+
+impl<T: 'static> Readonly for WritableMemo<T> {
+    type Target = Memo<T>;
+    fn into_readonly(self) -> Self::Target {
+        self.read_only()
+    }
+}
+
+impl<T: 'static> Readonly for Memo<T> {
+    type Target = Memo<T>;
+    fn into_readonly(self) -> Self::Target {
+        self
+    }
+}
+
+impl<T: 'static> Readonly for ReadSignal<T> {
+    type Target = ReadSignal<T>;
+    fn into_readonly(self) -> Self::Target {
+        self
+    }
 }
 
 fn run_in_new_root(detached: bool, f: impl FnOnce()) -> RootDisposer {

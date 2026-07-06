@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use vue_rs_macro::Reactive;
-use vue_rs_reactive::{effect, reactive};
+use vue_rs_reactive::{effect, reactive, readonly};
 
 #[derive(Reactive)]
 struct Counter {
@@ -112,4 +112,48 @@ fn reactive_nested_companion_is_copy() {
     let b = shape;
     assert_eq!(a.origin.x.get(), 3);
     assert_eq!(b.origin.y.get(), 4);
+}
+
+#[test]
+fn reactive_readonly_view_exposes_read_only_handles() {
+    let state = reactive(Counter {
+        count: 3,
+        label: "hi".into(),
+    });
+    let ro = readonly(state);
+    assert_eq!(ro.count.get(), 3);
+    assert_eq!(ro.label.get(), "hi");
+    // Writes through the mutable companion are visible in the read-only view;
+    // the view itself has no `set` (a compile-time guarantee: fields are
+    // `ReadSignal`).
+    state.count.set(8);
+    assert_eq!(ro.count.get(), 8);
+}
+
+#[test]
+fn reactive_readonly_view_projects_nested_companions() {
+    let shape = reactive(Shape {
+        name: "sq".into(),
+        origin: Point { x: 1, y: 2 },
+    });
+    let ro = readonly(shape);
+    assert_eq!(ro.name.get(), "sq");
+    // Nested `#[reactive]` field is itself projected to a read-only view.
+    assert_eq!(ro.origin.x.get(), 1);
+    assert_eq!(ro.origin.y.get(), 2);
+    shape.origin.x.set(9);
+    assert_eq!(ro.origin.x.get(), 9);
+}
+
+#[test]
+fn reactive_readonly_view_is_copy() {
+    let shape = reactive(Shape {
+        name: "c".into(),
+        origin: Point { x: 3, y: 4 },
+    });
+    let ro = readonly(shape);
+    let a = ro;
+    let b = ro;
+    assert_eq!(a.origin.x.get(), 3);
+    assert_eq!(b.name.get(), "c");
 }
