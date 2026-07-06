@@ -1447,6 +1447,102 @@ pub fn run_in_child_scope<T>(f: impl FnOnce() -> T) -> T {
     result
 }
 
+/// A reusable ownership scope — Vue's `effectScope()`. Create it, then call
+/// [`EffectScope::run`] to collect reactive effects (and other owned nodes) into
+/// it, and [`EffectScope::stop`] to dispose them all at once. Unlike
+/// [`create_root`], creation runs no body and [`run`](EffectScope::run) may be
+/// called more than once.
+///
+/// A scope created inside another scope's [`run`](EffectScope::run) is owned by
+/// that scope, so stopping the parent stops it too; use
+/// [`effect_scope_detached`] to opt out of that ownership.
+#[derive(Clone)]
+pub struct EffectScope {
+    id: NodeId,
+}
+
+/// Create an [`EffectScope`] owned by the surrounding scope (disposed with it).
+pub fn effect_scope() -> EffectScope {
+    EffectScope {
+        id: new_node(Kind::Root, None),
+    }
+}
+
+/// Create a detached [`EffectScope`], not owned by the surrounding scope. It
+/// survives disposal of the enclosing scope and must be stopped explicitly.
+pub fn effect_scope_detached() -> EffectScope {
+    let prev = RT.with_borrow_mut(|rt| rt.owner.take());
+    let id = new_node(Kind::Root, None);
+    RT.with_borrow_mut(|rt| rt.owner = prev);
+    EffectScope { id }
+}
+
+impl EffectScope {
+    /// Run `f` with this scope active, so reactive nodes created inside are owned
+    /// by it. Returns `f`'s result, or `None` if the scope has been stopped.
+    pub fn run<T>(&self, f: impl FnOnce() -> T) -> Option<T> {
+        if RT.with_borrow(|rt| !rt.nodes.contains(self.id)) {
+            return None;
+        }
+        let (prev_obs, prev_owner) = RT.with_borrow_mut(|rt| {
+            let p = (rt.observer, rt.owner);
+            rt.observer = None; // a scope body itself is not reactive
+            rt.owner = Some(self.id);
+            p
+        });
+        let result = f();
+        RT.with_borrow_mut(|rt| {
+            rt.observer = prev_obs;
+            rt.owner = prev_owner;
+        });
+        Some(result)
+    }
+
+    /// Dispose the scope and everything created within its `run` calls.
+    /// Idempotent: stopping an already-stopped scope is a no-op.
+    pub fn stop(&self) {
+        dispose_node(self.id);
+    }
+}
+
+/// Walk the owner chain from the current owner to the nearest ownership scope (a
+/// `Root`, e.g. an [`EffectScope`] or a component scope), skipping transient
+/// reactive nodes (effects/computeds) so scope callbacks target the scope rather
+/// than a node that re-runs.
+fn nearest_scope() -> Option<NodeId> {
+    RT.with_borrow(|rt| {
+        let mut cur = rt.owner;
+        while let Some(id) = cur {
+            let node = rt.nodes.get(id)?;
+            if matches!(node.kind, Kind::Root) {
+                return Some(id);
+            }
+            cur = node.owner;
+        }
+        None
+    })
+}
+
+/// Register a callback to run when the nearest enclosing [`EffectScope`] (or
+/// component scope) is disposed — Vue's `onScopeDispose`. Unlike [`on_cleanup`],
+/// which fires before every re-run of the current effect, this fires once, when
+/// the scope stops. No-op outside a scope.
+pub fn on_scope_dispose(f: impl FnOnce() + 'static) {
+    if let Some(scope) = nearest_scope() {
+        RT.with_borrow_mut(|rt| {
+            if let Some(node) = rt.nodes.get_mut(scope) {
+                node.cleanups.push(Box::new(f));
+            }
+        });
+    }
+}
+
+/// The nearest active [`EffectScope`] (or component scope), or `None` when called
+/// outside any scope — Vue's `getCurrentScope`.
+pub fn get_current_scope() -> Option<EffectScope> {
+    nearest_scope().map(|id| EffectScope { id })
+}
+
 /// Register a callback to run when the current scope is disposed (unmounted).
 /// For a component scope this fires once, when the component is removed.
 pub fn on_unmounted(callback: impl FnOnce() + 'static) {
