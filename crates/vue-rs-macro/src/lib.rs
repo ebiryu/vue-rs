@@ -203,6 +203,73 @@ fn compile_error(message: &str) -> TokenStream {
     quote! { compile_error!(#message); }.into()
 }
 
+/// `#[derive(Reactive)]` turns a plain struct into a fine-grained reactive
+/// companion: for `struct State { count: i32 }` it generates
+/// `struct StateReactive { count: Signal<i32> }` and an
+/// `impl Reactive for State` so `reactive(State { .. })` yields the companion.
+///
+/// The companion is `Copy` (every field is a `Signal` handle) and mirrors each
+/// field's visibility. Every field type must be `PartialEq + 'static` (enforced
+/// where each `signal(..)` is generated). Only structs with named fields are
+/// supported; tuple/unit structs, enums, unions, and generics are rejected.
+#[proc_macro_derive(Reactive)]
+pub fn derive_reactive(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as syn::DeriveInput);
+    match gen_reactive(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(message) => compile_error(&message),
+    }
+}
+
+fn gen_reactive(input: &syn::DeriveInput) -> Result<proc_macro2::TokenStream, String> {
+    if !input.generics.params.is_empty() {
+        return Err("#[derive(Reactive)] does not support generic structs".into());
+    }
+    let fields = match &input.data {
+        syn::Data::Struct(data) => match &data.fields {
+            syn::Fields::Named(named) => &named.named,
+            _ => {
+                return Err(
+                    "#[derive(Reactive)] requires a struct with named fields".into(),
+                )
+            }
+        },
+        _ => return Err("#[derive(Reactive)] can only be applied to structs".into()),
+    };
+
+    let name = &input.ident;
+    let vis = &input.vis;
+    let companion = quote::format_ident!("{}Reactive", name);
+
+    let companion_fields = fields.iter().map(|f| {
+        let fvis = &f.vis;
+        let fname = f.ident.as_ref().expect("named field");
+        let fty = &f.ty;
+        quote! { #fvis #fname: ::vue_rs_reactive::Signal<#fty> }
+    });
+
+    let inits = fields.iter().map(|f| {
+        let fname = f.ident.as_ref().expect("named field");
+        quote! { #fname: ::vue_rs_reactive::signal(self.#fname) }
+    });
+
+    Ok(quote! {
+        #[derive(Clone, Copy)]
+        #vis struct #companion {
+            #(#companion_fields,)*
+        }
+
+        impl ::vue_rs_reactive::Reactive for #name {
+            type Target = #companion;
+            fn into_reactive(self) -> Self::Target {
+                #companion {
+                    #(#inits,)*
+                }
+            }
+        }
+    })
+}
+
 /// Generate a component's `NameSlots` struct from its used slots (`(field,
 /// payload)` pairs) and the function parameter that receives it. With no slots
 /// it is a unit struct (still always passed, so every component call is uniform);

@@ -1494,6 +1494,23 @@ pub fn use_context<T: Clone + 'static>() -> Option<T> {
     })
 }
 
+/// A plain value that can be turned into a fine-grained reactive form, where
+/// each field becomes an independently tracked [`Signal`]. Implemented by
+/// `#[derive(Reactive)]`; the generated companion type is [`Reactive::Target`].
+pub trait Reactive {
+    /// The reactive companion produced from `Self` (each field a [`Signal`]).
+    type Target;
+    /// Consume the plain value, moving each field into its own [`Signal`].
+    fn into_reactive(self) -> Self::Target;
+}
+
+/// Vue's `reactive(...)`: turn a plain struct into its reactive companion,
+/// wrapping each field in a [`Signal`]. The source type must derive
+/// [`Reactive`] (`#[derive(Reactive)]`).
+pub fn reactive<R: Reactive>(source: R) -> R::Target {
+    source.into_reactive()
+}
+
 fn run_in_new_root(detached: bool, f: impl FnOnce()) -> RootDisposer {
     let id = if detached {
         // Create the root with no owner so it survives enclosing effect re-runs.
