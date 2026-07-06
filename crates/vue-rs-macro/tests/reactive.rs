@@ -57,3 +57,59 @@ fn reactive_companion_is_copy() {
     assert_eq!(a.count.get(), 7);
     assert_eq!(b.count.get(), 7);
 }
+
+#[derive(Reactive)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+#[derive(Reactive)]
+struct Shape {
+    name: String,
+    #[reactive]
+    origin: Point,
+}
+
+#[test]
+fn reactive_nests_reactive_fields() {
+    let shape = reactive(Shape {
+        name: "sq".into(),
+        origin: Point { x: 1, y: 2 },
+    });
+    // A `#[reactive]` field is embedded as its companion, not `Signal<Point>`.
+    assert_eq!(shape.origin.x.get(), 1);
+    assert_eq!(shape.origin.y.get(), 2);
+    assert_eq!(shape.name.get(), "sq");
+    shape.origin.x.set(9);
+    assert_eq!(shape.origin.x.get(), 9);
+}
+
+#[test]
+fn reactive_nested_fields_drive_effects_independently() {
+    let shape = reactive(Shape {
+        name: "a".into(),
+        origin: Point { x: 0, y: 0 },
+    });
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let s = seen.clone();
+    effect(move || {
+        s.borrow_mut().push(shape.origin.x.get());
+    });
+    // Sibling nested field is independent.
+    shape.origin.y.set(5);
+    shape.origin.x.set(1);
+    assert_eq!(*seen.borrow(), vec![0, 1]);
+}
+
+#[test]
+fn reactive_nested_companion_is_copy() {
+    let shape = reactive(Shape {
+        name: "c".into(),
+        origin: Point { x: 3, y: 4 },
+    });
+    let a = shape;
+    let b = shape;
+    assert_eq!(a.origin.x.get(), 3);
+    assert_eq!(b.origin.y.get(), 4);
+}

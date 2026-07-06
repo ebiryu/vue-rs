@@ -212,13 +212,26 @@ fn compile_error(message: &str) -> TokenStream {
 /// field's visibility. Every field type must be `PartialEq + 'static` (enforced
 /// where each `signal(..)` is generated). Only structs with named fields are
 /// supported; tuple/unit structs, enums, unions, and generics are rejected.
-#[proc_macro_derive(Reactive)]
+///
+/// A field annotated `#[reactive]` is itself a `#[derive(Reactive)]` type: its
+/// companion is embedded recursively (as `<Field as Reactive>::Target`, built
+/// with `reactive(..)`) instead of `Signal<Field>`, so nested fields stay
+/// independently tracked.
+#[proc_macro_derive(Reactive, attributes(reactive))]
 pub fn derive_reactive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
     match gen_reactive(&input) {
         Ok(tokens) => tokens.into(),
         Err(message) => compile_error(&message),
     }
+}
+
+/// A field marked `#[reactive]` is itself a `#[derive(Reactive)]` type: its
+/// companion is embedded recursively (via [`Reactive::Target`]) instead of being
+/// wrapped in a single `Signal<Field>`, so nested fields stay independently
+/// tracked.
+fn is_reactive_field(f: &syn::Field) -> bool {
+    f.attrs.iter().any(|a| a.path().is_ident("reactive"))
 }
 
 fn gen_reactive(input: &syn::DeriveInput) -> Result<proc_macro2::TokenStream, String> {
@@ -245,12 +258,20 @@ fn gen_reactive(input: &syn::DeriveInput) -> Result<proc_macro2::TokenStream, St
         let fvis = &f.vis;
         let fname = f.ident.as_ref().expect("named field");
         let fty = &f.ty;
-        quote! { #fvis #fname: ::vue_rs_reactive::Signal<#fty> }
+        if is_reactive_field(f) {
+            quote! { #fvis #fname: <#fty as ::vue_rs_reactive::Reactive>::Target }
+        } else {
+            quote! { #fvis #fname: ::vue_rs_reactive::Signal<#fty> }
+        }
     });
 
     let inits = fields.iter().map(|f| {
         let fname = f.ident.as_ref().expect("named field");
-        quote! { #fname: ::vue_rs_reactive::signal(self.#fname) }
+        if is_reactive_field(f) {
+            quote! { #fname: ::vue_rs_reactive::reactive(self.#fname) }
+        } else {
+            quote! { #fname: ::vue_rs_reactive::signal(self.#fname) }
+        }
     });
 
     Ok(quote! {
