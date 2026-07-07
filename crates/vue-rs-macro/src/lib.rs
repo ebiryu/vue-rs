@@ -221,7 +221,11 @@ fn compile_error(message: &str) -> TokenStream {
 /// It also generates a read-only view `StateReadonly` (each writable handle
 /// projected to a read-only one, recursively) and `impl Readonly for
 /// StateReactive`, so `readonly(reactive(State { .. }))` yields a view that reads
-/// the same nodes but exposes no writes.
+/// the same nodes but exposes no writes. A `From<StateReactive> for StateReadonly`
+/// lets the companion flow down as its read-only view where one is expected — a
+/// child prop declared `StateReadonly` receives the companion converted through
+/// `Into::into`, so a composite reactive value stays read-only across the prop
+/// boundary (one-way data flow).
 #[proc_macro_derive(Reactive, attributes(reactive))]
 pub fn derive_reactive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
@@ -329,6 +333,15 @@ fn gen_reactive(input: &syn::DeriveInput) -> Result<proc_macro2::TokenStream, St
                 #readonly {
                     #(#readonly_inits,)*
                 }
+            }
+        }
+
+        // Let a mutable companion flow down as its read-only view where one is
+        // expected (e.g. a child's prop), so `Into::into` in codegen picks it
+        // up — mirroring `From<Signal<T>> for ReadSignal<T>`.
+        impl ::core::convert::From<#companion> for #readonly {
+            fn from(companion: #companion) -> Self {
+                ::vue_rs_reactive::readonly(companion)
             }
         }
     })

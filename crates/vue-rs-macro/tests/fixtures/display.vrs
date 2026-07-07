@@ -1,0 +1,11 @@
+<template>
+  <p>{{ state.count.get() }}: {{ state.label.get() }}</p>
+</template>
+
+<script lang="rust">
+pub struct DisplayProps {
+    pub state: CounterReadonly,
+}
+
+let state = props.state;
+</script>

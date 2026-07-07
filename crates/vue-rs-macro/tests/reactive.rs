@@ -146,6 +146,21 @@ fn reactive_readonly_view_projects_nested_companions() {
 }
 
 #[test]
+fn reactive_companion_converts_into_its_readonly_view() {
+    // A mutable companion flows into its read-only view via `From`/`Into`, so
+    // codegen's `Into::into` can pass a reactive struct down as a read-only
+    // prop. The view reads the same nodes, so parent mutations are observed.
+    let state = reactive(Counter {
+        count: 1,
+        label: "hi".into(),
+    });
+    let ro: CounterReadonly = state.into();
+    assert_eq!(ro.count.get(), 1);
+    state.count.set(4);
+    assert_eq!(ro.count.get(), 4);
+}
+
+#[test]
 fn reactive_readonly_view_is_copy() {
     let shape = reactive(Shape {
         name: "c".into(),
