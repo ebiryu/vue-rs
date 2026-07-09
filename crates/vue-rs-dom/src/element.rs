@@ -3,13 +3,22 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 
-use vue_rs_reactive::{batch, create_root_detached, effect, on_cleanup, RootDisposer};
+use vue_rs_reactive::{
+    batch, create_root_detached, effect, on_cleanup, signal, ReadSignal, RootDisposer, Signal,
+};
 
 use crate::backend::{Backend, EventOptions};
 use crate::node_ref::TemplateRef;
 
 /// A mounted dynamic branch: its root node plus the disposer for its effects.
 type Branch<B> = (<B as Backend>::Node, RootDisposer);
+
+/// A keyed `dyn_for` row: the reactive item and index handles that drive its
+/// fine-grained bindings, plus its mounted branch.
+type Row<T, B> = (Signal<T>, Signal<usize>, Branch<B>);
+
+/// A keyed `dyn_for` row store, indexed by key.
+type KeyedRows<K, T, B> = Rc<RefCell<HashMap<K, Row<T, B>>>>;
 
 /// The live `(event name, listener)` of an `on_named` binding, shared between its
 /// resubscribing effect and the cleanup that detaches the final listener.
@@ -408,53 +417,103 @@ impl<B: Backend> El<B> {
         self
     }
 
-    /// Render a keyed list. Rows are reused across updates by their key; rows are
-    /// created, removed, and reordered to match `items`.
+    /// Render a keyed list. Rows are created, removed, and reordered to match
+    /// `items` by their key. Each row's item is handed to `view` as a reactive
+    /// [`ReadSignal`], so when a row's data changes under a stable key the row's
+    /// DOM is kept and only the fine-grained bindings that read the item re-run
+    /// (Vue-like patching, not a rebuild).
     pub fn dyn_for<T, K, IT, KF, V>(self, items: IT, key: KF, view: V) -> Self
     where
-        T: Clone + 'static,
+        T: Clone + PartialEq + 'static,
         K: Eq + Hash + Clone + 'static,
         IT: Fn() -> Vec<T> + 'static,
         KF: Fn(&T) -> K + 'static,
-        V: Fn(B, T) -> B::Node + 'static,
+        V: Fn(B, ReadSignal<T>) -> B::Node + 'static,
+    {
+        self.dyn_for_impl(items, key, move |backend, item, _index| view(backend, item))
+    }
+
+    /// Like [`dyn_for`](Self::dyn_for) but also hands `view` a reactive
+    /// [`ReadSignal`] of each row's current index, which updates when rows are
+    /// reordered.
+    pub fn dyn_for_indexed<T, K, IT, KF, V>(self, items: IT, key: KF, view: V) -> Self
+    where
+        T: Clone + PartialEq + 'static,
+        K: Eq + Hash + Clone + 'static,
+        IT: Fn() -> Vec<T> + 'static,
+        KF: Fn(&T) -> K + 'static,
+        V: Fn(B, ReadSignal<T>, ReadSignal<usize>) -> B::Node + 'static,
+    {
+        self.dyn_for_impl(items, key, view)
+    }
+
+    fn dyn_for_impl<T, K, IT, KF, V>(self, items: IT, key: KF, view: V) -> Self
+    where
+        T: Clone + PartialEq + 'static,
+        K: Eq + Hash + Clone + 'static,
+        IT: Fn() -> Vec<T> + 'static,
+        KF: Fn(&T) -> K + 'static,
+        V: Fn(B, ReadSignal<T>, ReadSignal<usize>) -> B::Node + 'static,
     {
         let anchor = self.backend.create_anchor();
         self.backend.append_child(&self.node, &anchor);
         let backend = self.backend.clone();
         let parent = self.node.clone();
-        let rows: Rc<RefCell<HashMap<K, Branch<B>>>> =
-            Rc::new(RefCell::new(HashMap::new()));
+        // Each keyed row owns a `Signal` for its item and its index; updates
+        // `set` these so the row's own bindings re-run instead of rebuilding it.
+        let rows: KeyedRows<K, T, B> = Rc::new(RefCell::new(HashMap::new()));
         // Rows are built in detached roots so they survive the list effect's
         // re-runs; register a cleanup so the enclosing scope's disposal tears down
         // any rows still mounted at that point.
         let rows_for_cleanup = rows.clone();
         on_cleanup(move || {
-            for (_key, (_node, disposer)) in rows_for_cleanup.borrow_mut().drain() {
+            for (_key, (_item, _index, (_node, disposer))) in rows_for_cleanup.borrow_mut().drain() {
                 disposer.dispose();
             }
         });
+        let build_row = move |backend: &B, item: T, index: usize| -> Row<T, B> {
+            let mut built = None;
+            let disposer = create_root_detached(|| {
+                // The item/index signals are created in the row's own detached
+                // root so they live and die with the row.
+                let item_sig = signal(item.clone());
+                let index_sig = signal(index);
+                let node = view(backend.clone(), item_sig.read_only(), index_sig.read_only());
+                built = Some((item_sig, index_sig, node));
+            });
+            let (item_sig, index_sig, node) = built.expect("view did not build a node");
+            (item_sig, index_sig, (node, disposer))
+        };
         effect(move || {
             let next = items();
             let mut old = rows.borrow_mut();
-            let mut result: HashMap<K, Branch<B>> = HashMap::new();
+            let mut result: HashMap<K, Row<T, B>> = HashMap::new();
             let mut ordered: Vec<B::Node> = Vec::with_capacity(next.len());
-            for item in next {
-                let k = key(&item);
-                let entry = old.remove(&k).unwrap_or_else(|| {
-                    let mut built = None;
-                    let disposer = create_root_detached(|| {
-                        built = Some(view(backend.clone(), item.clone()));
-                    });
-                    (built.expect("view did not build a node"), disposer)
-                });
-                ordered.push(entry.0.clone());
-                result.insert(k, entry);
-            }
-            // Anything left in `old` was removed from the list.
-            for (_key, (node, disposer)) in old.drain() {
-                backend.remove_child(&parent, &node);
-                disposer.dispose();
-            }
+            // Coalesce the per-row `set`s below into one flush so downstream
+            // bindings run once after the whole list is reconciled.
+            batch(|| {
+                for (index, item) in next.into_iter().enumerate() {
+                    let k = key(&item);
+                    let row = match old.remove(&k) {
+                        // Existing key: keep the row and push the new item/index
+                        // into its signals (unchanged values dedup to no-ops).
+                        Some((item_sig, index_sig, branch)) => {
+                            item_sig.set(item);
+                            index_sig.set(index);
+                            (item_sig, index_sig, branch)
+                        }
+                        // New key: build a fresh row.
+                        None => build_row(&backend, item, index),
+                    };
+                    ordered.push(row.2 .0.clone());
+                    result.insert(k, row);
+                }
+                // Anything left in `old` was removed from the list.
+                for (_key, (_item, _index, (node, disposer))) in old.drain() {
+                    backend.remove_child(&parent, &node);
+                    disposer.dispose();
+                }
+            });
             // Reinsert in list order (insert_before moves existing nodes).
             for node in &ordered {
                 backend.insert_before(&parent, node, &anchor);

@@ -334,7 +334,7 @@ fn dyn_for_adds_removes_and_reorders_keyed_rows() {
         .dyn_for(
             move || items.get(),
             |n| *n,
-            move |b, n| El::new(b, "li").text(&n.to_string()).finish(),
+            move |b, n| El::new(b, "li").dyn_text(move || n.get().to_string()).finish(),
         )
         .finish();
 
@@ -348,4 +348,88 @@ fn dyn_for_adds_removes_and_reorders_keyed_rows() {
 
     items.set(vec![3, 1, 4]); // add 4
     assert_eq!(dom.to_html(root), "<ul><li>3</li><li>1</li><li>4</li></ul>");
+}
+
+#[derive(Clone, PartialEq)]
+struct Row {
+    id: u32,
+    name: &'static str,
+}
+
+#[test]
+fn dyn_for_patches_row_when_item_data_changes_for_a_stable_key() {
+    let dom = MockDom::new();
+    let items = signal(vec![
+        Row { id: 1, name: "a" },
+        Row { id: 2, name: "b" },
+    ]);
+    let root = El::new(dom.clone(), "ul")
+        .dyn_for(
+            move || items.get(),
+            |r| r.id,
+            move |b, r| El::new(b, "li").dyn_text(move || r.get().name.to_string()).finish(),
+        )
+        .finish();
+
+    assert_eq!(dom.to_html(root), "<ul><li>a</li><li>b</li></ul>");
+
+    // Same keys (ids), but row 1's data changed: the row's binding must update.
+    items.set(vec![
+        Row { id: 1, name: "A" },
+        Row { id: 2, name: "b" },
+    ]);
+    assert_eq!(dom.to_html(root), "<ul><li>A</li><li>b</li></ul>");
+}
+
+#[test]
+fn dyn_for_does_not_rebuild_rows_on_data_change() {
+    let dom = MockDom::new();
+    let items = signal(vec![
+        Row { id: 1, name: "a" },
+        Row { id: 2, name: "b" },
+    ]);
+    let builds = Rc::new(Cell::new(0));
+    let b = builds.clone();
+    let _root = El::new(dom.clone(), "ul")
+        .dyn_for(
+            move || items.get(),
+            |r| r.id,
+            move |backend, r| {
+                b.set(b.get() + 1);
+                El::new(backend, "li").dyn_text(move || r.get().name.to_string()).finish()
+            },
+        )
+        .finish();
+
+    assert_eq!(builds.get(), 2);
+
+    // A data change under stable keys must patch, not rebuild: no new row builds.
+    items.set(vec![
+        Row { id: 1, name: "A" },
+        Row { id: 2, name: "b" },
+    ]);
+    assert_eq!(builds.get(), 2, "rows are patched via their signal, not rebuilt");
+}
+
+#[test]
+fn dyn_for_indexed_index_signal_updates_on_reorder() {
+    let dom = MockDom::new();
+    let items = signal(vec![10, 20]);
+    let root = El::new(dom.clone(), "ul")
+        .dyn_for_indexed(
+            move || items.get(),
+            |n| *n,
+            move |b, n, i| {
+                El::new(b, "li")
+                    .dyn_text(move || format!("{}:{}", i.get(), n.get()))
+                    .finish()
+            },
+        )
+        .finish();
+
+    assert_eq!(dom.to_html(root), "<ul><li>0:10</li><li>1:20</li></ul>");
+
+    // Reordering keeps each row (keyed by value) but its index changes reactively.
+    items.set(vec![20, 10]);
+    assert_eq!(dom.to_html(root), "<ul><li>0:20</li><li>1:10</li></ul>");
 }

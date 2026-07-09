@@ -80,13 +80,43 @@ fn v_for_keyed_list() {
 
     let node = view!(
         dom.clone(),
-        r#"<ul><li v-for="n in items.get()" :key="n">{{ n.to_string() }}</li></ul>"#
+        r#"<ul><li v-for="n in items.get()" :key="n">{{ n.get().to_string() }}</li></ul>"#
     );
 
     assert_eq!(dom.to_html(node), "<ul><li>1</li><li>2</li><li>3</li></ul>");
 
     items.set(vec![3, 1]);
     assert_eq!(dom.to_html(node), "<ul><li>3</li><li>1</li></ul>");
+}
+
+#[derive(Clone, PartialEq)]
+struct Row {
+    id: u32,
+    label: &'static str,
+}
+
+#[test]
+fn v_for_row_reflects_item_data_change_with_stable_key() {
+    let dom = MockDom::new();
+    let items = signal(vec![
+        Row { id: 1, label: "a" },
+        Row { id: 2, label: "b" },
+    ]);
+
+    let node = view!(
+        dom.clone(),
+        r#"<ul><li v-for="row in items.get()" :key="row.id">{{ row.get().label }}</li></ul>"#
+    );
+
+    assert_eq!(dom.to_html(node), "<ul><li>a</li><li>b</li></ul>");
+
+    // Keys (ids) unchanged, but row 1's label changed: the row's binding updates
+    // in place (no rebuild) because `row` is a reactive handle.
+    items.set(vec![
+        Row { id: 1, label: "A" },
+        Row { id: 2, label: "b" },
+    ]);
+    assert_eq!(dom.to_html(node), "<ul><li>A</li><li>b</li></ul>");
 }
 
 #[test]
@@ -96,12 +126,19 @@ fn v_for_with_index_binding() {
 
     let node = view!(
         dom.clone(),
-        r#"<ul><li v-for="(item, i) in items.get()" :key="item">{{ format!("{}:{}", i, item) }}</li></ul>"#
+        r#"<ul><li v-for="(item, i) in items.get()" :key="item">{{ format!("{}:{}", i.get(), item.get()) }}</li></ul>"#
     );
 
     assert_eq!(
         dom.to_html(node),
         "<ul><li>0:a</li><li>1:b</li><li>2:c</li></ul>"
+    );
+
+    // The index is reactive: reordering updates each row's position in place.
+    items.set(vec!["b".to_string(), "a".to_string(), "c".to_string()]);
+    assert_eq!(
+        dom.to_html(node),
+        "<ul><li>0:b</li><li>1:a</li><li>2:c</li></ul>"
     );
 }
 
@@ -112,7 +149,7 @@ fn v_for_row_click_fires_handler() {
     let clicked = signal(0);
     let _node = view!(
         dom.clone(),
-        r#"<ul><li v-for="n in items.get()" :key="n"><button @click="clicked.set(n)">{{ n.to_string() }}</button></li></ul>"#
+        r#"<ul><li v-for="n in items.get()" :key="n"><button @click="clicked.set(n.get())">{{ n.get().to_string() }}</button></li></ul>"#
     );
     let button = dom.find("button").expect("a row button");
     dom.dispatch(button, "click");

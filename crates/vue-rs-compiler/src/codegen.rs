@@ -560,16 +560,16 @@ impl Codegen {
         let key = parse_expr(key)?;
         let view = self.element(el)?;
 
-        // `(item, index)` binds the position alongside the item. We enumerate the
-        // iterable into `(usize, T)` rows and destructure with the index first to
-        // match `enumerate`'s order. The index is captured at build time, so a
-        // reused row keeps its original index when the list is reordered.
+        // `(item, index)` binds the position alongside the item. Both are handed
+        // to the row as reactive `ReadSignal`s: the item is read in the body as
+        // `item.get()`, and the index updates when rows are reordered. The `:key`
+        // expression runs on the raw item value, so it uses `item` directly.
         if let Some((item_pat, index_pat)) = parse_index_binding(binding)? {
             return Ok(quote! {
-                .dyn_for(
-                    move || (#iterable).into_iter().enumerate().collect::<::std::vec::Vec<_>>(),
-                    |(#index_pat, #item_pat)| (#key).clone(),
-                    move |__backend, (#index_pat, #item_pat)| #view,
+                .dyn_for_indexed(
+                    move || (#iterable),
+                    |#item_pat| (#key).clone(),
+                    move |__backend, #item_pat, #index_pat| #view,
                 )
             });
         }
@@ -577,6 +577,8 @@ impl Codegen {
         let binding: TokenStream = binding
             .parse()
             .map_err(|e| format!("invalid v-for binding: {e}"))?;
+        // The row's item is a reactive `ReadSignal`, read in the body as
+        // `item.get()`; the `:key` expression runs on the raw item value.
         Ok(quote! {
             .dyn_for(
                 move || (#iterable),
