@@ -1333,6 +1333,147 @@ fn find_dyn<'a>(el: &'a Element, name: &str) -> Option<&'a str> {
     })
 }
 
+/// Parse an embedded template expression, expanding `$name` read sugar first.
+///
+/// A `$name` token pair anywhere in the expression becomes `name.get()` — the
+/// reactive read of a signal/memo — so authors can drop the explicit `.get()`.
+/// The rewrite is purely local to each `$name`, so surrounding operators, field
+/// projections, and method calls compose as written (`$item.name` →
+/// `item.get().name`).
 fn parse_expr(src: &str) -> Result<syn::Expr, String> {
-    syn::parse_str::<syn::Expr>(src).map_err(|e| format!("invalid expression `{src}`: {e}"))
+    let tokens: TokenStream = src
+        .parse()
+        .map_err(|e| format!("invalid expression `{src}`: {e}"))?;
+    let tokens = expand_value_sugar(tokens);
+    syn::parse2::<syn::Expr>(tokens).map_err(|e| format!("invalid expression `{src}`: {e}"))
+}
+
+/// Single-character operators that form a compound-assignment `$name OP= expr`.
+const COMPOUND_OPS: &[char] = &['+', '-', '*', '/', '%', '&', '|', '^'];
+
+/// Rewrite `$name` value sugar in a token stream, recursing into delimited
+/// groups. A `$name` read becomes `name.get()`; `$name = rhs` becomes
+/// `name.set(rhs)`; `$name OP= rhs` becomes `name.set(name.get() OP (rhs))`. A
+/// lone `$` (not immediately followed by an identifier) is left as-is, so an
+/// otherwise-invalid expression still surfaces its own error.
+fn expand_value_sugar(tokens: TokenStream) -> TokenStream {
+    use proc_macro2::TokenTree;
+
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut out: Vec<TokenTree> = Vec::new();
+    let mut i = 0;
+    while i < trees.len() {
+        match &trees[i] {
+            TokenTree::Punct(p)
+                if p.as_char() == '$'
+                    && matches!(trees.get(i + 1), Some(TokenTree::Ident(_))) =>
+            {
+                let TokenTree::Ident(name) = &trees[i + 1] else {
+                    unreachable!("matched an ident");
+                };
+                match assignment_at(&trees, i + 2) {
+                    Some((op, rhs_start)) => {
+                        // The right-hand side runs to the next top-level `;` (a
+                        // statement separator in a block handler) or end of stream.
+                        let rhs_end = (rhs_start..trees.len())
+                            .find(|&j| is_semicolon(&trees[j]))
+                            .unwrap_or(trees.len());
+                        let rhs = expand_value_sugar(trees[rhs_start..rhs_end].iter().cloned().collect());
+                        out.extend(set_call(name, op, rhs));
+                        i = rhs_end;
+                        continue;
+                    }
+                    None => {
+                        out.extend(get_call(name));
+                        i += 2;
+                    }
+                }
+            }
+            TokenTree::Group(g) => {
+                let mut group = proc_macro2::Group::new(g.delimiter(), expand_value_sugar(g.stream()));
+                group.set_span(g.span());
+                out.push(TokenTree::Group(group));
+                i += 1;
+            }
+            _ => {
+                out.push(trees[i].clone());
+                i += 1;
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// If an assignment operator begins at index `j`, return `(op, rhs_start)`: `op`
+/// is `None` for a plain `=` and `Some(c)` for a compound `c=`; `rhs_start` is
+/// the index where the right-hand side begins. Plain `=` is distinguished from
+/// `==` by its punct spacing being `Alone`.
+fn assignment_at(trees: &[proc_macro2::TokenTree], j: usize) -> Option<(Option<char>, usize)> {
+    use proc_macro2::{Spacing, TokenTree};
+    match trees.get(j)? {
+        TokenTree::Punct(p) if p.as_char() == '=' && p.spacing() == Spacing::Alone => {
+            Some((None, j + 1))
+        }
+        TokenTree::Punct(p)
+            if COMPOUND_OPS.contains(&p.as_char()) && p.spacing() == Spacing::Joint =>
+        {
+            match trees.get(j + 1) {
+                Some(TokenTree::Punct(eq)) if eq.as_char() == '=' => Some((Some(p.as_char()), j + 2)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn is_semicolon(tree: &proc_macro2::TokenTree) -> bool {
+    matches!(tree, proc_macro2::TokenTree::Punct(p) if p.as_char() == ';')
+}
+
+/// The tokens for `name.get()`, spanned to `name`.
+fn get_call(name: &proc_macro2::Ident) -> Vec<proc_macro2::TokenTree> {
+    use proc_macro2::{Delimiter, Group, Ident, Punct, Spacing, TokenTree};
+    let span = name.span();
+    let mut dot = Punct::new('.', Spacing::Alone);
+    dot.set_span(span);
+    let mut args = Group::new(Delimiter::Parenthesis, TokenStream::new());
+    args.set_span(span);
+    vec![
+        TokenTree::Ident(name.clone()),
+        TokenTree::Punct(dot),
+        TokenTree::Ident(Ident::new("get", span)),
+        TokenTree::Group(args),
+    ]
+}
+
+/// The tokens for a signal write: `name.set(rhs)` for a plain assignment
+/// (`op == None`), or `name.set(name.get() OP (rhs))` for a compound one.
+fn set_call(name: &proc_macro2::Ident, op: Option<char>, rhs: TokenStream) -> Vec<proc_macro2::TokenTree> {
+    use proc_macro2::{Delimiter, Group, Ident, Punct, Spacing, TokenTree};
+    let span = name.span();
+
+    let arg: TokenStream = match op {
+        None => rhs,
+        Some(op) => {
+            let mut op_punct = Punct::new(op, Spacing::Alone);
+            op_punct.set_span(span);
+            let mut rhs_group = Group::new(Delimiter::Parenthesis, rhs);
+            rhs_group.set_span(span);
+            let mut tokens: Vec<TokenTree> = get_call(name);
+            tokens.push(TokenTree::Punct(op_punct));
+            tokens.push(TokenTree::Group(rhs_group));
+            tokens.into_iter().collect()
+        }
+    };
+
+    let mut dot = Punct::new('.', Spacing::Alone);
+    dot.set_span(span);
+    let mut args = Group::new(Delimiter::Parenthesis, arg);
+    args.set_span(span);
+    vec![
+        TokenTree::Ident(name.clone()),
+        TokenTree::Punct(dot),
+        TokenTree::Ident(Ident::new("set", span)),
+        TokenTree::Group(args),
+    ]
 }

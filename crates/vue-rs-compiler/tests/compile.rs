@@ -2,8 +2,9 @@
 //!
 //! The generated code references `__backend` (the backend instance, bound by the
 //! component macro) and the user's reactive bindings via their Rust expressions.
-//! Interpolations carry full Rust exprs (e.g. `{{ count.get() }}`); the `.get()`
-//! sugar is a later authoring-layer concern.
+//! Interpolations carry full Rust exprs (e.g. `{{ count.get() }}`), or the
+//! `$name` value sugar that expands to `name.get()` / `name.set(...)` (see the
+//! `dollar_*` tests below).
 
 use quote::quote;
 use vue_rs_compiler::compile_template;
@@ -1112,4 +1113,128 @@ fn error_on_mismatched_closing_tag() {
 #[test]
 fn error_on_invalid_expression() {
     assert!(compile_template("<p>{{ count.get( }}</p>").is_err());
+}
+
+// `$name` read sugar: in any template expression, `$name` expands to
+// `name.get()` — the reactive read of a signal/memo — so authors need not spell
+// `.get()`. It applies uniformly wherever a Rust expression is embedded.
+
+#[test]
+fn dollar_read_sugar_in_interpolation() {
+    compiles_to(
+        "<p>{{ $count }}</p>",
+        quote! { El::new(__backend.clone(), "p").dyn_text(move || (count.get()).to_string()).finish() },
+    );
+}
+
+#[test]
+fn dollar_read_sugar_in_larger_expression() {
+    // The expansion is local to the `$name` token; surrounding operators stay put.
+    compiles_to(
+        "<p>{{ $count + 1 }}</p>",
+        quote! { El::new(__backend.clone(), "p").dyn_text(move || (count.get() + 1).to_string()).finish() },
+    );
+}
+
+#[test]
+fn dollar_read_sugar_with_field_and_method_access() {
+    // `$item.name` reads the signal, then projects the field: `item.get().name`.
+    compiles_to(
+        "<p>{{ $item.name }}</p>",
+        quote! { El::new(__backend.clone(), "p").dyn_text(move || (item.get().name).to_string()).finish() },
+    );
+}
+
+#[test]
+fn dollar_read_sugar_in_bound_attribute() {
+    compiles_to(
+        r#"<div :id="$name"></div>"#,
+        quote! { El::new(__backend.clone(), "div").dyn_attr("id", move || (name.get()).to_string()).finish() },
+    );
+}
+
+#[test]
+fn dollar_read_sugar_in_event_handler() {
+    compiles_to(
+        r#"<button @click="log($count)">x</button>"#,
+        quote! {
+            El::new(__backend.clone(), "button")
+                .on("click", move || { log(count.get()) })
+                .text("x")
+                .finish()
+        },
+    );
+}
+
+// `$name` write sugar: `$name = expr` assigns through the signal setter
+// (`name.set(expr)`), and compound assignment `$name OP= expr` reads through the
+// getter first (`name.set(name.get() OP (expr))`). Together with the read sugar,
+// a handler like `@click="$count += 1"` needs no `.get()`/`.set()` at all.
+
+#[test]
+fn dollar_write_sugar_plain_assignment() {
+    compiles_to(
+        r#"<button @click="$count = 5">x</button>"#,
+        quote! {
+            El::new(__backend.clone(), "button")
+                .on("click", move || { count.set(5) })
+                .text("x")
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn dollar_write_sugar_assignment_reads_rhs() {
+    // The right-hand side is itself sugar-expanded.
+    compiles_to(
+        r#"<button @click="$count = $other + 1">x</button>"#,
+        quote! {
+            El::new(__backend.clone(), "button")
+                .on("click", move || { count.set(other.get() + 1) })
+                .text("x")
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn dollar_write_sugar_compound_assignment() {
+    // `+=` desugars through the getter, with the RHS parenthesized so its
+    // precedence is preserved.
+    compiles_to(
+        r#"<button @click="$count += 1">x</button>"#,
+        quote! {
+            El::new(__backend.clone(), "button")
+                .on("click", move || { count.set(count.get() + (1)) })
+                .text("x")
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn dollar_write_sugar_compound_assignment_preserves_rhs_precedence() {
+    compiles_to(
+        r#"<button @click="$count *= a + b">x</button>"#,
+        quote! {
+            El::new(__backend.clone(), "button")
+                .on("click", move || { count.set(count.get() * (a + b)) })
+                .text("x")
+                .finish()
+        },
+    );
+}
+
+#[test]
+fn dollar_equality_is_not_write_sugar() {
+    // `==` is not an assignment, so `$a == $b` stays a comparison of two reads.
+    compiles_to(
+        "<p>{{ $a == $b }}</p>",
+        quote! {
+            El::new(__backend.clone(), "p")
+                .dyn_text(move || (a.get() == b.get()).to_string())
+                .finish()
+        },
+    );
 }

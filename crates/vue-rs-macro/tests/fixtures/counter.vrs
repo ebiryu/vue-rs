@@ -1,10 +1,9 @@
 <template>
-  <button @click="increment()">count is {{ count.get() }}</button>
+  <button @click="$count += 1">count is {{ $count }}</button>
 </template>
 
 <script lang="rust">
 use vue_rs_reactive::signal;
 
 let count = signal(0);
-let increment = move || count.set(count.get() + 1);
 </script>
