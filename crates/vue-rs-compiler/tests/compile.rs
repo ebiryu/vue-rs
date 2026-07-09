@@ -1238,3 +1238,35 @@ fn dollar_equality_is_not_write_sugar() {
         },
     );
 }
+
+#[test]
+fn error_on_component_kebab_prop_name() {
+    // A component prop name that is not a valid Rust identifier must be a clean
+    // compile error, not a proc-macro panic.
+    let err = compile_template(r#"<MyComp :some-prop="x" />"#)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("some-prop"), "unexpected error: {err}");
+}
+
+#[test]
+fn error_on_component_event_with_modifier_name() {
+    // `@click.stop` on a component lowers to `on_click.stop`, not an identifier.
+    assert!(compile_template(r#"<MyComp @click.stop="go()" />"#).is_err());
+}
+
+#[test]
+fn error_on_component_colon_event_name() {
+    // Vue's `@update:model-value` shape is not a valid Rust identifier here.
+    assert!(compile_template(r#"<MyComp @update:model-value="f()" />"#).is_err());
+}
+
+#[test]
+fn error_on_component_static_kebab_attr() {
+    assert!(compile_template(r#"<MyComp data-id="1" />"#).is_err());
+}
+
+#[test]
+fn error_on_component_v_model_kebab_arg() {
+    assert!(compile_template(r#"<MyComp v-model:some-arg="x" />"#).is_err());
+}

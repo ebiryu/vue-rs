@@ -317,7 +317,7 @@ impl Codegen {
                     ));
                 }
                 Attr::Dyn { name, expr } => {
-                    let field = Ident::new(name, Span::call_site());
+                    let field = ident_from_name(name, "prop")?;
                     let expr = parse_expr(expr)?;
                     // Reactive props flow down read-only: `Into` converts a
                     // `Signal`/`Memo` to the child's `ReadSignal` field (and is
@@ -326,7 +326,12 @@ impl Codegen {
                     fields.push(quote! { .#field(::core::convert::Into::into(#expr)) });
                 }
                 Attr::Event { name, handler } => {
-                    let field = Ident::new(&format!("on_{name}"), Span::call_site());
+                    // Validate the raw event name first so the error names what the
+                    // user wrote, not the `on_`-prefixed form.
+                    let field = ident_from_name(&format!("on_{name}"), "event")
+                        .map_err(|_| {
+                            format!("`{name}` is not a valid event name (must be a Rust identifier)")
+                        })?;
                     let handler = parse_expr(handler)?;
                     fields.push(quote! { .#field(::vue_rs_dom::Callback::new(#handler)) });
                 }
@@ -351,7 +356,7 @@ impl Codegen {
                     );
                 }
                 Attr::Static { name, value } => {
-                    let field = Ident::new(name, Span::call_site());
+                    let field = ident_from_name(name, "prop")?;
                     fields.push(quote! { .#field(#value) });
                 }
             }
@@ -372,7 +377,10 @@ impl Codegen {
             match slot_directive(child_el) {
                 Some((name, binding)) if child_el.tag == "template" => {
                     let content = self.single_root(&child_el.children)?;
-                    let setter = Ident::new(&format!("with_{name}"), Span::call_site());
+                    let setter = ident_from_name(&format!("with_{name}"), "slot")
+                        .map_err(|_| {
+                            format!("`{name}` is not a valid slot name (must be a Rust identifier)")
+                        })?;
                     if binding.is_empty() {
                         // A plain named slot: no payload, bound as `()`.
                         setters.push(quote! { .#setter(move |__backend, ()| #content) });
@@ -613,6 +621,14 @@ fn is_component(tag: &str) -> bool {
     tag.chars().next().is_some_and(|c| c.is_ascii_uppercase())
 }
 
+/// Build an identifier from a user-provided component attribute/prop/event name,
+/// returning a clean error instead of panicking when the name is not a legal
+/// Rust identifier (e.g. a kebab-case or modifier-bearing name).
+fn ident_from_name(name: &str, role: &str) -> Result<Ident, String> {
+    syn::parse_str::<Ident>(name)
+        .map_err(|_| format!("`{name}` is not a valid {role} name (must be a Rust identifier)"))
+}
+
 /// Whether an attribute name is a component `v-model` (bare, `:arg`, or with
 /// modifiers).
 fn is_component_v_model(name: &str) -> bool {
@@ -642,8 +658,11 @@ fn component_model_fields(name: &str) -> Result<(Ident, Ident), String> {
         Some("") => return Err("a component `v-model:` argument must not be empty".to_string()),
         Some(arg) => arg.to_string(),
     };
-    let value_field = Ident::new(&prop, Span::call_site());
-    let update_field = Ident::new(&format!("on_update_{prop}"), Span::call_site());
+    let value_field = ident_from_name(&prop, "v-model argument")?;
+    let update_field = ident_from_name(&format!("on_update_{prop}"), "v-model argument")
+        .map_err(|_| {
+            format!("`{prop}` is not a valid v-model argument (must be a Rust identifier)")
+        })?;
     Ok((value_field, update_field))
 }
 
