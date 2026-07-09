@@ -8,12 +8,14 @@
 use std::fmt;
 
 mod codegen;
+mod component;
 mod parser;
 mod props;
 mod script;
 mod sfc;
 mod style;
 
+pub use component::compile_component;
 pub use props::check_prop_fields;
 pub use script::rewrite_script_sugar;
 pub use sfc::{split_sfc, Sfc};
