@@ -494,6 +494,13 @@ impl<B: Backend> El<B> {
             batch(|| {
                 for (index, item) in next.into_iter().enumerate() {
                     let k = key(&item);
+                    // A duplicate key within one render is a usage error. Keep the
+                    // first row for this key and skip the rest, so we never build a
+                    // row we would drop without disposing (a leaked scope) or insert
+                    // a node we then orphan.
+                    if result.contains_key(&k) {
+                        continue;
+                    }
                     let row = match old.remove(&k) {
                         // Existing key: keep the row and push the new item/index
                         // into its signals (unchanged values dedup to no-ops).

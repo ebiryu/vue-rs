@@ -350,6 +350,29 @@ fn dyn_for_adds_removes_and_reorders_keyed_rows() {
     assert_eq!(dom.to_html(root), "<ul><li>3</li><li>1</li><li>4</li></ul>");
 }
 
+#[test]
+fn dyn_for_collapses_duplicate_keys_and_does_not_orphan_nodes() {
+    // Duplicate keys are a usage error; the runtime must degrade safely: one row
+    // per key, and no orphaned node left behind when the list shrinks. Before the
+    // fix, two `1`s render two <li>s and the first is orphaned forever.
+    let dom = MockDom::new();
+    let items = signal(vec![1, 1, 2]);
+    let root = El::new(dom.clone(), "ul")
+        .dyn_for(
+            move || items.get(),
+            |n| *n, // identity key: duplicate value = duplicate key
+            move |b, n| El::new(b, "li").dyn_text(move || n.get().to_string()).finish(),
+        )
+        .finish();
+
+    // Only one row per distinct key.
+    assert_eq!(dom.to_html(root), "<ul><li>1</li><li>2</li></ul>");
+
+    // Shrinking to a single `1` must not leave an orphaned second <li>.
+    items.set(vec![1]);
+    assert_eq!(dom.to_html(root), "<ul><li>1</li></ul>");
+}
+
 #[derive(Clone, PartialEq)]
 struct Row {
     id: u32,
