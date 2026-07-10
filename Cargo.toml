@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/vue-rs",
     "crates/vue-rs-reactive",
     "crates/vue-rs-dom",
     "crates/vue-rs-compiler",

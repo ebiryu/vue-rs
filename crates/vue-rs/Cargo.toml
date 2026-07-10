@@ -1,0 +1,19 @@
+[package]
+name = "vue-rs"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vue-rs-reactive = { path = "../vue-rs-reactive" }
+vue-rs-dom = { path = "../vue-rs-dom" }
+vue-rs-macro = { path = "../vue-rs-macro" }
+
+[features]
+# Enable the browser (WebDom) surface of vue-rs-dom.
+web = ["vue-rs-dom/web"]
+
+[lints]
+workspace = true
