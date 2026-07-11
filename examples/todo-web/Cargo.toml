@@ -10,5 +10,7 @@ crate-type = ["cdylib"]
 [dependencies]
 vue-rs-reactive = { path = "../../crates/vue-rs-reactive" }
 vue-rs-dom = { path = "../../crates/vue-rs-dom", features = ["web"] }
-vue-rs-macro = { path = "../../crates/vue-rs-macro" }
 wasm-bindgen = "0.2"
+
+[build-dependencies]
+vue-rs-build = { path = "../../crates/vue-rs-build" }

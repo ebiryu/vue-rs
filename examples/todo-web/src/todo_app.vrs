@@ -5,15 +5,15 @@
       <input v-model="draft" />
       <button @click="add()">Add</button>
     </div>
-    <p v-if="todos.get().is_empty()">Nothing to do yet.</p>
+    <p v-if="$todos.is_empty()">Nothing to do yet.</p>
     <ul>
-      <li v-for="todo in todos.get()" :key="todo.id">
-        <button @click="toggle(todo.id)">{{ mark(todo.done.get()) }}</button>
-        <span>{{ todo.text.get() }}</span>
-        <button @click="remove(todo.id)">x</button>
+      <li v-for="todo in $todos" :key="todo.id">
+        <button @click="toggle($todo.id)">{{ mark($todo.$done) }}</button>
+        <span>{{ $todo.$text }}</span>
+        <button @click="remove($todo.id)">x</button>
       </li>
     </ul>
-    <p>{{ remaining.get().to_string() }} item(s) left</p>
+    <p>{{ $remaining.to_string() }} item(s) left</p>
   </div>
 </template>
 

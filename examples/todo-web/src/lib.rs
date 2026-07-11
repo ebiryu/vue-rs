@@ -1,15 +1,16 @@
 //! TodoMVC-style demo exercising v-for, v-if, v-model, events, and computed.
+//! Components under `src/` are compiled at build time by `vue-rs-build`.
 
 use vue_rs_dom::WebDom;
-use vue_rs_macro::component;
 use wasm_bindgen::prelude::*;
 
-component!(TodoApp, "src/todo_app.vrs");
+include!(concat!(env!("OUT_DIR"), "/vue_rs_components.rs"));
+use components::TodoApp;
 
 #[wasm_bindgen(start)]
 pub fn start() {
     let dom = WebDom;
-    dom.inject_style(TODOAPP_STYLE);
+    dom.inject_style(components::todo_app::TODOAPP_STYLE);
     let node = TodoApp(dom.clone(), Default::default());
     dom.mount(&node);
 }
